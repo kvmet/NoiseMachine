@@ -28,6 +28,14 @@ static float random_unit(uint32_t *state) {
   return (float)(random_u32(state) >> 8) * (1.0f / 16777216.0f);
 }
 
+static float random_between(uint32_t *state, float low, float high) {
+  return low + (high - low) * random_unit(state);
+}
+
+static float random_log_between(uint32_t *state, float low, float high) {
+  return expf(logf(low) + (logf(high) - logf(low)) * random_unit(state));
+}
+
 static uint32_t stream_seed(uint32_t seed, uint32_t tag) {
   /* Avalanche the tags so streams do not start at adjacent xorshift positions. */
   uint32_t x = seed + tag;
@@ -57,7 +65,16 @@ static int valid_config(const noise_config *c) {
       !in_range(c->stereo_width_m, 0.0f, 0.5f) ||
       !in_range(c->head_amount, 0.0f, 1.0f) ||
       !in_range(c->rear_amount, 0.0f, 1.0f) ||
-      !in_range(c->reverb_gain, 0.0f, 1.0f)) {
+      !in_range(c->reverb_gain, 0.0f, 1.0f) ||
+      !in_range(c->water_impact_gain_min, 0.0f, 2.0f) ||
+      !in_range(c->water_impact_gain_max, c->water_impact_gain_min, 2.0f) ||
+      !in_range(c->water_bubble_probability, 0.0f, 1.0f) ||
+      !in_range(c->water_bubble_radius_min_m, 0.00016f, 0.004f) ||
+      !in_range(c->water_bubble_radius_max_m, c->water_bubble_radius_min_m, 0.004f) ||
+      !in_range(c->water_bubble_gain_min, 0.0f, 8.0f) ||
+      !in_range(c->water_bubble_gain_max, c->water_bubble_gain_min, 8.0f) ||
+      !in_range(c->water_bubble_decay_min, 0.25f, 20.0f) ||
+      !in_range(c->water_bubble_decay_max, c->water_bubble_decay_min, 20.0f)) {
     return 0;
   }
   if (c->vary_rain && !in_range(c->rain_intensity,
@@ -101,6 +118,15 @@ void noise_config_default(noise_config *c) {
   c->head_amount = 1.0f;
   c->rear_amount = 1.0f;
   c->reverb_gain = 0.12f;
+  c->water_impact_gain_min = 0.15f;
+  c->water_impact_gain_max = 0.5f;
+  c->water_bubble_probability = 0.85f;
+  c->water_bubble_radius_min_m = 0.00035f;
+  c->water_bubble_radius_max_m = 0.0016f;
+  c->water_bubble_gain_min = 1.2f;
+  c->water_bubble_gain_max = 2.5f;
+  c->water_bubble_decay_min = 3.0f;
+  c->water_bubble_decay_max = 8.0f;
   c->weather_mod_amount[WEATHER_MOD_ARRIVAL_RATE] = 1.0f;
   c->weather_mod_amount[WEATHER_MOD_DROP_SIZE] = 1.0f;
 }
@@ -242,15 +268,23 @@ static noise_result start_drop(noise_gen *gen, const droplet *drop) {
   float radius_ratio = drop->radius_m / 0.0005f;
   float amplitude = 0.035f * sqrtf(radius_ratio * radius_ratio * radius_ratio) *
                     drop->velocity_m_s / 4.0f;
+  float impact_gain = drop->surface == WATER ? random_between(&gen->drop_rng,
+      gen->config.water_impact_gain_min, gen->config.water_impact_gain_max) : 1.0f;
   float impact_frequency = 1000.0f + 15000.0f * random_unit(&gen->drop_rng);
-  mode_init(&voice->mode[0], impact_frequency, 2.0f * impact_frequency, amplitude, 0);
+  mode_init(&voice->mode[0], impact_frequency, 2.0f * impact_frequency,
+            amplitude * impact_gain, 0);
   if (drop->surface == WATER && drop->bubble_radius_m > 0.0f) {
     float r = drop->bubble_radius_m;
     float frequency = sqrtf(3.0f * 1.4f * NOISE_PRESSURE_PA / NOISE_WATER_DENSITY) /
                       (2.0f * NOISE_PI * r);
     float damping = 0.13f / r + 0.0072f / (r * sqrtf(r));
+    float decay = random_between(&gen->drop_rng, gen->config.water_bubble_decay_min,
+                                 gen->config.water_bubble_decay_max);
+    float bubble_gain = random_between(&gen->drop_rng, gen->config.water_bubble_gain_min,
+                                       gen->config.water_bubble_gain_max);
     /* Bubble onset follows the impact; 2 ms is an audible-design choice. */
-    mode_init(&voice->mode[1], frequency, damping, 2.0f * amplitude,
+    mode_init(&voice->mode[1], frequency, damping / decay,
+              bubble_gain * impact_gain * amplitude,
               (uint32_t)(0.002f * NOISE_SAMPLE_RATE_HZ));
   } else if (drop->surface != WATER) {
     const float *m = material_modes[drop->surface];
@@ -351,8 +385,12 @@ static void spawn_rain(noise_gen *gen) {
   drop.velocity_m_s = terminal * sqrtf(-expm1f(
       -2.0f * NOISE_GRAVITY * fall_height / (terminal * terminal)));
   drop.surface = choose_surface(gen, intensity);
-  drop.bubble_radius_m = drop.surface == WATER && size < small ?
-      0.00016f + 0.00031f * random_unit(&gen->drop_rng) : 0.0f;
+  drop.bubble_radius_m = 0.0f;
+  if (drop.surface == WATER &&
+      random_unit(&gen->drop_rng) < gen->config.water_bubble_probability) {
+    drop.bubble_radius_m = random_log_between(&gen->drop_rng,
+        gen->config.water_bubble_radius_min_m, gen->config.water_bubble_radius_max_m);
+  }
   float near = weather_mod_log(gen->config.min_distance_m,
       gen->config.weather_mod_amount[WEATHER_MOD_MIN_DISTANCE], intensity, 0.25f, 100.0f);
   float far = weather_mod_log(gen->config.max_distance_m,

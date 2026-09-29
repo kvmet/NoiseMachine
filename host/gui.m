@@ -49,6 +49,15 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlModConcrete,
   NoiseControlModGlass,
   NoiseControlModMetal,
+  NoiseControlWaterImpactMin,
+  NoiseControlWaterImpactMax,
+  NoiseControlWaterBubbleProbability,
+  NoiseControlWaterBubbleRadiusMin,
+  NoiseControlWaterBubbleRadiusMax,
+  NoiseControlWaterBubbleGainMin,
+  NoiseControlWaterBubbleGainMax,
+  NoiseControlWaterBubbleDecayMin,
+  NoiseControlWaterBubbleDecayMax,
   NoiseControlCount
 };
 
@@ -133,6 +142,17 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
     config.weather_mod_amount[WEATHER_MOD_WATER_WEIGHT + i] =
         [self controlValue:NoiseControlModWater + i];
   }
+  config.water_impact_gain_min = [self controlValue:NoiseControlWaterImpactMin];
+  config.water_impact_gain_max = [self controlValue:NoiseControlWaterImpactMax];
+  config.water_bubble_probability = [self controlValue:NoiseControlWaterBubbleProbability];
+  config.water_bubble_radius_min_m =
+      0.001f * [self controlValue:NoiseControlWaterBubbleRadiusMin];
+  config.water_bubble_radius_max_m =
+      0.001f * [self controlValue:NoiseControlWaterBubbleRadiusMax];
+  config.water_bubble_gain_min = [self controlValue:NoiseControlWaterBubbleGainMin];
+  config.water_bubble_gain_max = [self controlValue:NoiseControlWaterBubbleGainMax];
+  config.water_bubble_decay_min = [self controlValue:NoiseControlWaterBubbleDecayMin];
+  config.water_bubble_decay_max = [self controlValue:NoiseControlWaterBubbleDecayMax];
   return config;
 }
 
@@ -277,6 +297,30 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   } else if (control == NoiseControlMaxDistance &&
              value < [self controlValue:NoiseControlMinDistance]) {
     [self storeControl:NoiseControlMinDistance value:value];
+  } else if (control == NoiseControlWaterImpactMin &&
+             value > [self controlValue:NoiseControlWaterImpactMax]) {
+    [self storeControl:NoiseControlWaterImpactMax value:value];
+  } else if (control == NoiseControlWaterImpactMax &&
+             value < [self controlValue:NoiseControlWaterImpactMin]) {
+    [self storeControl:NoiseControlWaterImpactMin value:value];
+  } else if (control == NoiseControlWaterBubbleRadiusMin &&
+             value > [self controlValue:NoiseControlWaterBubbleRadiusMax]) {
+    [self storeControl:NoiseControlWaterBubbleRadiusMax value:value];
+  } else if (control == NoiseControlWaterBubbleRadiusMax &&
+             value < [self controlValue:NoiseControlWaterBubbleRadiusMin]) {
+    [self storeControl:NoiseControlWaterBubbleRadiusMin value:value];
+  } else if (control == NoiseControlWaterBubbleGainMin &&
+             value > [self controlValue:NoiseControlWaterBubbleGainMax]) {
+    [self storeControl:NoiseControlWaterBubbleGainMax value:value];
+  } else if (control == NoiseControlWaterBubbleGainMax &&
+             value < [self controlValue:NoiseControlWaterBubbleGainMin]) {
+    [self storeControl:NoiseControlWaterBubbleGainMin value:value];
+  } else if (control == NoiseControlWaterBubbleDecayMin &&
+             value > [self controlValue:NoiseControlWaterBubbleDecayMax]) {
+    [self storeControl:NoiseControlWaterBubbleDecayMax value:value];
+  } else if (control == NoiseControlWaterBubbleDecayMax &&
+             value < [self controlValue:NoiseControlWaterBubbleDecayMin]) {
+    [self storeControl:NoiseControlWaterBubbleDecayMin value:value];
   }
 
   if (atomic_load_explicit(&_varyRain, memory_order_relaxed) &&
@@ -556,6 +600,30 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                  value:defaults.reverb_gain minimum:0 maximum:1 logarithmic:NO]
   ]];
 
+  NSView *water = [self tabViewWithRows:@[
+      [self sectionLabel:@"Random range per water drop"],
+      [self sliderRow:@"Impact gain minimum" control:NoiseControlWaterImpactMin
+                 value:defaults.water_impact_gain_min minimum:0 maximum:2 logarithmic:NO],
+      [self sliderRow:@"Impact gain maximum" control:NoiseControlWaterImpactMax
+                 value:defaults.water_impact_gain_max minimum:0 maximum:2 logarithmic:NO],
+      [self sliderRow:@"Bubble probability" control:NoiseControlWaterBubbleProbability
+                 value:defaults.water_bubble_probability minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Bubble radius min (mm)" control:NoiseControlWaterBubbleRadiusMin
+                 value:1000.0 * defaults.water_bubble_radius_min_m
+               minimum:0.16 maximum:4 logarithmic:YES],
+      [self sliderRow:@"Bubble radius max (mm)" control:NoiseControlWaterBubbleRadiusMax
+                 value:1000.0 * defaults.water_bubble_radius_max_m
+               minimum:0.16 maximum:4 logarithmic:YES],
+      [self sliderRow:@"Bubble gain minimum" control:NoiseControlWaterBubbleGainMin
+                 value:defaults.water_bubble_gain_min minimum:0 maximum:8 logarithmic:NO],
+      [self sliderRow:@"Bubble gain maximum" control:NoiseControlWaterBubbleGainMax
+                 value:defaults.water_bubble_gain_max minimum:0 maximum:8 logarithmic:NO],
+      [self sliderRow:@"Decay scale minimum" control:NoiseControlWaterBubbleDecayMin
+                 value:defaults.water_bubble_decay_min minimum:0.25 maximum:20 logarithmic:YES],
+      [self sliderRow:@"Decay scale maximum" control:NoiseControlWaterBubbleDecayMax
+                 value:defaults.water_bubble_decay_max minimum:0.25 maximum:20 logarithmic:YES]
+  ]];
+
   NSView *weatherMod = [self tabViewWithRows:@[
       [self sectionLabel:@"Weather intensity attenuverters"],
       [NSTextField labelWithString:@"+ follows intensity     0 disconnects     - inverts"],
@@ -602,7 +670,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   ]];
 
   NSTabView *tabs = [[NSTabView alloc] initWithFrame:NSZeroRect];
-  for (NSArray *item in @[@[@"Mixer", mixer], @[@"Rain", rain],
+  for (NSArray *item in @[@[@"Mixer", mixer], @[@"Rain", rain], @[@"Water", water],
                            @[@"Weather Mod", weatherMod], @[@"Spatial", spatial]]) {
     NSTabViewItem *tab = [[NSTabViewItem alloc] initWithIdentifier:item[0]];
     tab.label = item[0];

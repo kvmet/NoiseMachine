@@ -56,14 +56,15 @@ make -C host gui
 ./host/noise_gui
 ```
 
-Press **Start** for continuous playback. The Mixer, Rain, Weather Mod, and
-Spatial tabs expose every field in `noise_config`. Weather Mod routes intensity
-to density, size, gain, reverb, physical, and surface parameters with bipolar
-attenuverters. Type an exact value or use a slider; wide physical ranges use
-logarithmic sliders. Changes apply while audio plays. Distance, head, width, and
-surface changes affect new rain drops; existing drop tails finish with their
-original spatial settings. Changing the seed and resetting the generator clears
-all current audio state.
+Press **Start** for continuous playback. The Mixer, Rain, Water, Weather Mod,
+and Spatial tabs expose every field in `noise_config`. Water controls randomized
+impact gain, bubble probability, radius, gain, and decay ranges. Weather Mod
+routes intensity to density, size, gain, reverb, physical, and surface
+parameters with bipolar attenuverters. Type an exact value or use a slider;
+wide physical ranges use logarithmic sliders. Changes apply while audio plays.
+Distance, head, width, and surface changes affect new rain drops; existing drop
+tails finish with their original spatial settings. Changing the seed and
+resetting the generator clears all current audio state.
 
 ## Host controls
 

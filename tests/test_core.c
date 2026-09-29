@@ -52,6 +52,17 @@ static void test_validation(void) {
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c.weather_mod_amount[WEATHER_MOD_REVERB_GAIN] = NAN;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.water_impact_gain_min = 0.6f;
+  c.water_impact_gain_max = 0.5f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.water_bubble_radius_min_m = 0.002f;
+  c.water_bubble_radius_max_m = 0.001f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.water_bubble_decay_max = INFINITY;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   droplet drop = water_drop();
   drop.bubble_radius_m = 0.0001f;
   assert(noise_trigger_drop(&a, &drop) == NOISE_INVALID_DROP);
@@ -168,6 +179,12 @@ static void test_noise_spectra(void) {
 
 static void test_bubble_physics(void) {
   noise_config c = silent_config();
+  c.water_impact_gain_min = 1.0f;
+  c.water_impact_gain_max = 1.0f;
+  c.water_bubble_gain_min = 2.0f;
+  c.water_bubble_gain_max = 2.0f;
+  c.water_bubble_decay_min = 1.0f;
+  c.water_bubble_decay_max = 1.0f;
   droplet drop = water_drop();
   assert(noise_init(&a, &c, 1) == NOISE_OK);
   assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
@@ -194,6 +211,68 @@ static void test_bubble_physics(void) {
   double measured_frequency = acos(larger.coefficient / (2.0 * sqrt(larger.radius_squared))) *
                               NOISE_SAMPLE_RATE_HZ / (2.0 * TEST_PI);
   assert(fabs(measured_frequency - frequency / 2.0) < 0.01);
+}
+
+static void test_water_controls(void) {
+  noise_config c = silent_config();
+  c.water_impact_gain_min = 0.25f;
+  c.water_impact_gain_max = 0.25f;
+  c.water_bubble_gain_min = 1.0f;
+  c.water_bubble_gain_max = 1.0f;
+  c.water_bubble_decay_min = 4.0f;
+  c.water_bubble_decay_max = 4.0f;
+  droplet drop = water_drop();
+  drop.bubble_radius_m = 0.0008f;
+  assert(noise_init(&a, &c, 31) == NOISE_OK);
+  assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
+
+  c.water_impact_gain_min = 0.5f;
+  c.water_impact_gain_max = 0.5f;
+  c.water_bubble_gain_min = 2.0f;
+  c.water_bubble_gain_max = 2.0f;
+  assert(noise_init(&b, &c, 31) == NOISE_OK);
+  assert(noise_trigger_drop(&b, &drop) == NOISE_OK);
+  assert(fabs(b.voices[0].mode[0].previous / a.voices[0].mode[0].previous - 2.0) < 1e-6);
+  assert(fabs(b.voices[0].mode[1].previous / a.voices[0].mode[1].previous - 4.0) < 1e-6);
+
+  double r = drop.bubble_radius_m;
+  double damping = (0.13 / r + 0.0072 / pow(r, 1.5)) / 4.0;
+  double expected_radius = exp(-damping / NOISE_SAMPLE_RATE_HZ);
+  assert(fabs(sqrt(a.voices[0].mode[1].radius_squared) - expected_radius) < 1e-6);
+}
+
+static void test_automatic_water_bubbles(void) {
+  noise_config c = silent_config();
+  c.rain_intensity = 1.0f;
+  c.max_drops_per_s = 2000.0f;
+  memset(c.surface_weight, 0, sizeof(c.surface_weight));
+  c.surface_weight[WATER] = 1.0f;
+  c.water_bubble_probability = 1.0f;
+  c.water_bubble_radius_min_m = 0.0006f;
+  c.water_bubble_radius_max_m = 0.0012f;
+  assert(noise_init(&a, &c, 41) == NOISE_OK);
+  int16_t frame[2];
+  for (unsigned i = 0; i < 10000 && a.state.generated_drops == 0; ++i) {
+    noise_fill(&a, frame, 1);
+  }
+  assert(a.state.generated_drops == 1);
+  noise_mode bubble = a.voices[0].mode[1];
+  assert(bubble.remaining > 0);
+  double q = sqrt(bubble.radius_squared);
+  double frequency = acos(bubble.coefficient / (2.0 * q)) *
+                     NOISE_SAMPLE_RATE_HZ / (2.0 * TEST_PI);
+  double radius = sqrt(3.0 * 1.4 * 101325.0 / 1000.0) /
+                  (2.0 * TEST_PI * frequency);
+  assert(radius >= c.water_bubble_radius_min_m);
+  assert(radius <= c.water_bubble_radius_max_m);
+
+  c.water_bubble_probability = 0.0f;
+  assert(noise_init(&a, &c, 41) == NOISE_OK);
+  for (unsigned i = 0; i < 10000 && a.state.generated_drops == 0; ++i) {
+    noise_fill(&a, frame, 1);
+  }
+  assert(a.state.generated_drops == 1);
+  assert(a.voices[0].mode[1].remaining == 0);
 }
 
 static void test_lifetimes_and_capacity(void) {
@@ -289,6 +368,10 @@ static void test_spatial_geometry(void) {
 
 static void test_spatial_bypass_and_distance(void) {
   noise_config c = silent_config();
+  c.water_impact_gain_min = 1.0f;
+  c.water_impact_gain_max = 1.0f;
+  c.water_bubble_decay_min = 1.0f;
+  c.water_bubble_decay_max = 1.0f;
   c.stereo_width_m = 0.0f;
   droplet drop = water_drop();
   drop.position.angle_rad = 0.7f;
@@ -552,6 +635,8 @@ int main(void) {
   test_hum();
   test_noise_spectra();
   test_bubble_physics();
+  test_water_controls();
+  test_automatic_water_bubbles();
   test_lifetimes_and_capacity();
   test_spatial_geometry();
   test_spatial_bypass_and_distance();

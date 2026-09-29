@@ -89,6 +89,15 @@ typedef struct noise_config {
   float head_amount; /* 0: spaced microphones, 1: spherical head. */
   float rear_amount; /* 0: bypass rear filter, 1: full rear filter. */
   float reverb_gain; /* Rain send is before distance attenuation. */
+  float water_impact_gain_min;
+  float water_impact_gain_max;
+  float water_bubble_probability;
+  float water_bubble_radius_min_m;
+  float water_bubble_radius_max_m;
+  float water_bubble_gain_min;
+  float water_bubble_gain_max;
+  float water_bubble_decay_min;
+  float water_bubble_decay_max;
   float weather_mod_amount[NOISE_WEATHER_MOD_COUNT]; /* Bipolar depths, -1..1. */
 } noise_config;
 

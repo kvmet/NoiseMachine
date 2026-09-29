@@ -124,19 +124,17 @@ with f uniform between 1 and 16 kHz and β = 2f. These frequency and damping
 choices follow [1, section 4.1.1]. This produces a brief impact impulse.
 The engine uses this temporal mode, not the paper's complete dipole field,
 water-hammer pressure amplitude, or geometry-dependent radiation model.
+Water impacts additionally sample `water_impact_gain_min` to
+`water_impact_gain_max`; other materials use gain one.
 
 ## Water bubbles
 
-Automatic water impacts create a bubble only for the 0.8 to 1.1 mm diameter
-bin, following the simplified entrainment rule in [1, section 4.2]. Other
-water drops still make an impact sound. This rule is not a complete model
-of irregular bubble entrainment in nature.
-
-Bubble radius is sampled uniformly from 0.16 to 0.47 mm, the range reported
-in [1, section 4.1.2]. Uniform sampling independent of drop diameter within
-that bin is an explicit approximation; the paper does not establish that
-probability distribution. A manually triggered water drop may instead
-specify any bubble radius from 0.16 to 4 mm, or zero for no bubble.
+Each automatic water impact creates a bubble with the configured probability,
+which defaults to 0.85. Bubble radius is sampled logarithmically from the
+configured range, which defaults to 0.35 to 1.6 mm. This extends beyond the
+0.16 to 0.47 mm range reported in [1, section 4.1.2] as an explicit sound-design
+choice. A manually triggered water drop supplies any bubble radius from 0.16 to
+4 mm, or zero for no bubble, and does not use the probability or radius range.
 
 The resonance follows Minnaert's formula as presented in [1, equation 5]:
 
@@ -149,12 +147,14 @@ The decay approximation from [4, section 3, equation 3] is
 
     β_B = 0.13/r_B + 0.0072/r_B^(3/2)
 
-The bubble is a damped sinusoid with initial amplitude 2A and an onset
-88 frames after impact, approximately 2 ms. The amplitude multiplier and
-onset delay are sound design choices. Frequencies remain fixed during a
-bubble's lifetime. The pitch-rise model described in [3] and [4] is not
-implemented. If added, instantaneous frequency must be integrated to get
-phase; substituting f(t)t directly doubles a linear chirp's slope.
+The bubble is a damped sinusoid with an onset 88 frames after impact,
+approximately 2 ms. Each bubble samples a gain and decay scale from configured
+ranges. Gain multiplies the water impact amplitude. The physical damping above
+is divided by the decay scale; defaults from 3 to 8 produce longer tails.
+Frequencies remain fixed during a bubble's lifetime. The pitch-rise model
+described in [3] and [4] is not implemented. If added, instantaneous frequency
+must be integrated to get phase; substituting f(t)t directly doubles a linear
+chirp's slope.
 
 ## Solid surfaces
 
@@ -415,6 +415,10 @@ Configuration ranges are:
 - Distance bounds: 0.25 to 100 m, ordered; equal bounds make a ring.
 - Falling height: 0.01 to 1000 m.
 - Stereo width: 0 to 0.5 m; head and rear amounts: 0 to 1.
+- Water impact gain bounds: 0 to 2, ordered. Bubble probability: 0 to 1.
+- Automatic bubble radius bounds: 0.16 to 4 mm, ordered.
+- Bubble gain bounds: 0 to 8, ordered. Decay scale bounds: 0.25 to 20,
+  ordered.
 - Weather modulation amounts: -1 to 1 each.
 
 Four separate random streams drive ambient samples, arrivals, drop
@@ -433,7 +437,7 @@ and peak voice count.
 ## ESP32 and validation
 
 The sample rate, channel count, and pool size are compile-time constants.
-The engine occupies 55,136 bytes with the tested host ABI, plus 1,024
+The engine occupies 55,168 bytes with the tested host ABI, plus 1,024
 bytes for a 256-frame PCM buffer. Confirm `sizeof(noise_gen)` on the
 target ABI. Keep the generator in static storage, not a small task stack. Buffers are
 caller-owned. Trigonometry, exponentials, and square roots for drops run
