@@ -22,7 +22,8 @@ def main():
         work = Path(directory)
         cc = os.environ.get("CC", "cc")
         flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Wpedantic", "-Werror", f"-I{CORE}"]
-        run(cc, *flags, str(ROOT / "tests/test_core.c"), *CORE_SOURCES,
+        tests = [str(path) for path in sorted((ROOT / "tests").glob("*.c"))]
+        run(cc, *flags, *tests, *CORE_SOURCES,
             "-lm", "-o", str(work / "test_core"))
         run(str(work / "test_core"))
         host = work / "noise_host"
