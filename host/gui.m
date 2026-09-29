@@ -3,11 +3,11 @@
 
 #include <errno.h>
 #include <math.h>
-#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "audio_output.h"
 #include "noise_core.h"
 
 typedef NS_ENUM(NSInteger, NoiseControl) {
@@ -224,29 +224,15 @@ static OSStatus export_m4a(NSURL *url, const noise_config *config, uint32_t seed
   double _minimum[NoiseControlCount];
   double _maximum[NoiseControlCount];
   BOOL _logarithmic[NoiseControlCount];
-  AudioUnit _audioUnit;
-  noise_gen _generator;
-  _Atomic(float) _controls[NoiseControlCount];
-  _Atomic(int) _varyRain;
-  _Atomic(int) _cicadaSpecies;
-  _Atomic(float) _strikeDistance;
-  _Atomic(float) _strikeAngle;
-  _Atomic(int) _strikeRequested;
+  audio_output *_output;
+  float _controls[NoiseControlCount];
+  int _varyRain;
+  cicada_species _cicadaSpecies;
   BOOL _playing;
 }
 
-static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
-                             const AudioTimeStamp *timestamp, UInt32 bus,
-                             UInt32 frames, AudioBufferList *buffers) {
-  (void)flags;
-  (void)timestamp;
-  (void)bus;
-  NoiseAppDelegate *app = (__bridge NoiseAppDelegate *)context;
-  return [app renderFrames:frames into:buffers];
-}
-
 - (float)controlValue:(NoiseControl)control {
-  return atomic_load_explicit(&_controls[control], memory_order_relaxed);
+  return _controls[control];
 }
 
 - (noise_config)configFromControls {
@@ -270,8 +256,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   config.crickets.placement.max_distance_m = [self controlValue:NoiseControlCricketMaxDistance];
   config.cicadas.gain = [self controlValue:NoiseControlCicadaGain];
   config.cicadas.pitch_hz = [self controlValue:NoiseControlCicadaPitch];
-  config.cicadas.species =
-      (cicada_species)atomic_load_explicit(&_cicadaSpecies, memory_order_relaxed);
+  config.cicadas.species = _cicadaSpecies;
   config.cicadas.click_rate_scale = [self controlValue:NoiseControlCicadaClickRate];
   config.cicadas.chorus = [self controlValue:NoiseControlCicadaChorus];
   config.cicadas.placement.stereo_width = [self controlValue:NoiseControlCicadaWidth];
@@ -288,7 +273,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   config.weather.intensity = [self controlValue:NoiseControlRainIntensity];
   config.weather.min_intensity = [self controlValue:NoiseControlMinRain];
   config.weather.max_intensity = [self controlValue:NoiseControlMaxRain];
-  config.weather.vary = atomic_load_explicit(&_varyRain, memory_order_relaxed);
+  config.weather.vary = _varyRain;
   config.weather.step_s = [self controlValue:NoiseControlWeatherStep];
   config.weather.slew_s = [self controlValue:NoiseControlRainSlew];
   config.rain.max_drops_per_s = [self controlValue:NoiseControlDropRate];
@@ -338,69 +323,12 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   return config;
 }
 
-- (void)loadControlsIntoGenerator {
+- (void)publishConfig {
+  if (!_output) return;
   noise_config config = [self configFromControls];
-  /* Controls load one atomic at a time, so a snapshot taken mid-edit can pair a new
-     minimum with an old maximum. The engine rejects it and the next callback applies. */
-  (void)noise_set_config(&_generator, &config);
-}
-
-- (OSStatus)renderFrames:(UInt32)frames into:(AudioBufferList *)buffers {
-  size_t bytes = (size_t)frames * NOISE_CHANNELS * sizeof(int16_t);
-  if (buffers->mNumberBuffers != 1 || !buffers->mBuffers[0].mData ||
-      buffers->mBuffers[0].mDataByteSize < bytes) {
-    for (UInt32 i = 0; i < buffers->mNumberBuffers; ++i) {
-      if (buffers->mBuffers[i].mData) {
-        memset(buffers->mBuffers[i].mData, 0, buffers->mBuffers[i].mDataByteSize);
-      }
-    }
-    return noErr;
+  if (audio_output_set_config(_output, &config) != NOISE_OK) {
+    _statusLabel.stringValue = @"Settings are invalid; playback keeps the last valid settings";
   }
-  [self loadControlsIntoGenerator];
-  if (atomic_exchange_explicit(&_strikeRequested, 0, memory_order_acquire)) {
-    thunder_strike strike = {{
-        atomic_load_explicit(&_strikeDistance, memory_order_relaxed),
-        atomic_load_explicit(&_strikeAngle, memory_order_relaxed)}};
-    noise_trigger_thunder(&_generator, &strike);
-  }
-  noise_fill(&_generator, buffers->mBuffers[0].mData, frames);
-  buffers->mBuffers[0].mDataByteSize = (UInt32)bytes;
-  return noErr;
-}
-
-- (OSStatus)setupAudio {
-  AudioComponentDescription description = {
-      .componentType = kAudioUnitType_Output,
-      .componentSubType = kAudioUnitSubType_DefaultOutput,
-      .componentManufacturer = kAudioUnitManufacturer_Apple,
-      .componentFlags = 0,
-      .componentFlagsMask = 0};
-  AudioComponent component = AudioComponentFindNext(NULL, &description);
-  if (!component) return kAudio_ParamError;
-  OSStatus status = AudioComponentInstanceNew(component, &_audioUnit);
-  if (status != noErr) return status;
-
-  AudioStreamBasicDescription format = {
-      .mSampleRate = NOISE_SAMPLE_RATE_HZ,
-      .mFormatID = kAudioFormatLinearPCM,
-      .mFormatFlags = kAudioFormatFlagIsSignedInteger |
-                      kAudioFormatFlagIsPacked |
-                      kAudioFormatFlagsNativeEndian,
-      .mBytesPerPacket = NOISE_CHANNELS * sizeof(int16_t),
-      .mFramesPerPacket = 1,
-      .mBytesPerFrame = NOISE_CHANNELS * sizeof(int16_t),
-      .mChannelsPerFrame = NOISE_CHANNELS,
-      .mBitsPerChannel = 16};
-  status = AudioUnitSetProperty(_audioUnit, kAudioUnitProperty_StreamFormat,
-                                kAudioUnitScope_Input, 0, &format, sizeof(format));
-  if (status != noErr) return status;
-  AURenderCallbackStruct callback = {
-      .inputProc = render_audio,
-      .inputProcRefCon = (__bridge void *)self};
-  status = AudioUnitSetProperty(_audioUnit, kAudioUnitProperty_SetRenderCallback,
-                                kAudioUnitScope_Input, 0, &callback, sizeof(callback));
-  if (status != noErr) return status;
-  return AudioUnitInitialize(_audioUnit);
 }
 
 - (NSString *)formattedValue:(double)value control:(NoiseControl)control {
@@ -422,7 +350,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 
 - (void)storeControl:(NoiseControl)control value:(double)value {
   value = fmin(_maximum[control], fmax(_minimum[control], value));
-  atomic_store_explicit(&_controls[control], (float)value, memory_order_relaxed);
+  _controls[control] = (float)value;
   if (control >= NoiseControlWaterWeight && control <= NoiseControlAsphaltRoofWeight) {
     _sliders[control].doubleValue = value > 0.0 ? fmax(-7.0, log10(value)) : -7.0;
   } else {
@@ -501,13 +429,13 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
     [self storeControl:NoiseControlWaterBubbleDecayMin value:value];
   }
 
-  if (atomic_load_explicit(&_varyRain, memory_order_relaxed) &&
-      (control == NoiseControlMinRain || control == NoiseControlMaxRain)) {
+  if (_varyRain && (control == NoiseControlMinRain || control == NoiseControlMaxRain)) {
     double rain = [self controlValue:NoiseControlRainIntensity];
     rain = fmin([self controlValue:NoiseControlMaxRain],
                 fmax([self controlValue:NoiseControlMinRain], rain));
     [self storeControl:NoiseControlRainIntensity value:rain];
   }
+  [self publishConfig];
 }
 
 - (NSView *)sliderRow:(NSString *)name control:(NoiseControl)control
@@ -516,7 +444,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   _minimum[control] = minimum;
   _maximum[control] = maximum;
   _logarithmic[control] = logarithmic;
-  atomic_init(&_controls[control], (float)value);
+  _controls[control] = (float)value;
 
   NSTextField *label = [NSTextField labelWithString:name];
   label.alignment = NSTextAlignmentRight;
@@ -592,30 +520,30 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 }
 
 - (void)cicadaSpeciesChanged:(NSPopUpButton *)sender {
-  atomic_store_explicit(&_cicadaSpecies, (int)sender.indexOfSelectedItem, memory_order_relaxed);
+  _cicadaSpecies = (cicada_species)sender.indexOfSelectedItem;
+  [self publishConfig];
 }
 
 - (void)varyChanged:(NSButton *)sender {
-  int vary = sender.state == NSControlStateValueOn;
-  atomic_store_explicit(&_varyRain, vary, memory_order_relaxed);
-  if (vary) {
+  _varyRain = sender.state == NSControlStateValueOn;
+  if (_varyRain) {
     double rain = [self controlValue:NoiseControlRainIntensity];
     rain = fmin([self controlValue:NoiseControlMaxRain],
                 fmax([self controlValue:NoiseControlMinRain], rain));
     [self storeControl:NoiseControlRainIntensity value:rain];
   }
+  [self publishConfig];
 }
 
 - (void)strikeThunder:(NSButton *)sender {
   (void)sender;
+  if (!_output) return;
   double near = [self controlValue:NoiseControlThunderMinDistance];
   double far = [self controlValue:NoiseControlThunderMaxDistance];
   double u = arc4random() / 4294967296.0;
   double distance = sqrt(near * near + u * (far * far - near * near));
   double angle = 2.0 * M_PI * (arc4random() / 4294967296.0);
-  atomic_store_explicit(&_strikeDistance, (float)distance, memory_order_relaxed);
-  atomic_store_explicit(&_strikeAngle, (float)angle, memory_order_relaxed);
-  atomic_store_explicit(&_strikeRequested, 1, memory_order_release);
+  audio_output_strike(_output, (position_polar){(float)distance, (float)angle});
   _statusLabel.stringValue = _playing ?
       [NSString stringWithFormat:@"Strike at %.0f m", distance] :
       @"Strike queued until playback starts";
@@ -684,34 +612,23 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 - (void)resetGenerator:(NSButton *)sender {
   (void)sender;
   uint32_t seed;
-  if (![self parseSeed:&seed]) return;
-
-  BOOL resume = _playing;
-  if (resume) AudioOutputUnitStop(_audioUnit);
-  noise_config config = [self configFromControls];
-  noise_result result = noise_init(&_generator, &config, seed);
-  if (result != NOISE_OK) {
-    _playing = NO;
-    _playButton.title = @"Start";
-    _statusLabel.stringValue = @"Current parameters are invalid";
-    return;
-  }
-  if (resume) AudioOutputUnitStart(_audioUnit);
-  _statusLabel.stringValue = resume ? @"Playing from new seed" : @"Generator reset";
+  if (!_output || ![self parseSeed:&seed]) return;
+  audio_output_reset(_output, seed);
+  _statusLabel.stringValue = _playing ? @"Playing from new seed" : @"Generator reset";
 }
 
 - (void)togglePlayback:(NSButton *)sender {
   (void)sender;
   OSStatus status;
   if (_playing) {
-    status = AudioOutputUnitStop(_audioUnit);
+    status = audio_output_stop(_output);
     if (status == noErr) {
       _playing = NO;
       _playButton.title = @"Start";
       _statusLabel.stringValue = @"Stopped";
     }
   } else {
-    status = AudioOutputUnitStart(_audioUnit);
+    status = audio_output_start(_output);
     if (status == noErr) {
       _playing = YES;
       _playButton.title = @"Stop";
@@ -749,15 +666,8 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   noise_config defaults;
   noise_config_default(&defaults);
   apply_startup_settings(&defaults);
-  if (noise_init(&_generator, &defaults, 1) != NOISE_OK) {
-    [NSApp terminate:nil];
-    return;
-  }
-  atomic_init(&_varyRain, defaults.weather.vary);
-  atomic_init(&_cicadaSpecies, (int)defaults.cicadas.species);
-  atomic_init(&_strikeDistance, defaults.thunder.min_distance_m);
-  atomic_init(&_strikeAngle, 0.0f);
-  atomic_init(&_strikeRequested, 0);
+  _varyRain = defaults.weather.vary;
+  _cicadaSpecies = defaults.cicadas.species;
 
   _window = [[NSWindow alloc]
       initWithContentRect:NSMakeRect(0.0, 0.0, 650.0, 770.0)
@@ -1059,7 +969,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                                       constant:16.0]
   ]];
 
-  OSStatus status = [self setupAudio];
+  OSStatus status = audio_output_create(&_output, &defaults, 1);
   if (status != noErr) {
     _playButton.enabled = NO;
     _statusLabel.stringValue = [NSString stringWithFormat:@"Audio setup error: %d", status];
@@ -1075,11 +985,8 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
   (void)notification;
-  if (_playing) AudioOutputUnitStop(_audioUnit);
-  if (_audioUnit) {
-    AudioUnitUninitialize(_audioUnit);
-    AudioComponentInstanceDispose(_audioUnit);
-  }
+  audio_output_destroy(_output);
+  _output = NULL;
 }
 
 @end

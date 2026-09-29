@@ -11,6 +11,9 @@ import wave
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "src" / "NoiseMachine"
 CORE_SOURCES = [str(path) for path in sorted(CORE.glob("*.c"))]
+# Host modules without platform frameworks, shared by the GUI and the host tests.
+HOST_SOURCES = [str(ROOT / "host" / name) for name in ("audio_mailbox.c",)]
+GUI_SOURCES = [str(ROOT / "host" / name) for name in ("gui.m", "audio_output.c")]
 
 
 def run(*args, **kwargs):
@@ -26,6 +29,10 @@ def main():
         run(cc, *flags, *tests, *CORE_SOURCES,
             "-lm", "-o", str(work / "test_core"))
         run(str(work / "test_core"))
+        host_tests = [str(path) for path in sorted((ROOT / "tests/host").glob("*.c"))]
+        run(cc, *flags, f"-I{ROOT / 'host'}", "-pthread", *host_tests,
+            *HOST_SOURCES, *CORE_SOURCES, "-lm", "-o", str(work / "test_host"))
+        run(str(work / "test_host"))
         host = work / "noise_host"
         run(cc, *flags, str(ROOT / "host/main.c"), *CORE_SOURCES,
             "-lm", "-o", str(host))
@@ -80,7 +87,7 @@ def main():
             *objects, "-o", str(work / "sketch"))
         run(str(work / "sketch"))
         if sys.platform == "darwin":
-            run(cc, *flags, "-fobjc-arc", str(ROOT / "host/gui.m"),
+            run(cc, *flags, "-fobjc-arc", *GUI_SOURCES, *HOST_SOURCES,
                 *CORE_SOURCES, "-lm", "-framework", "Cocoa",
                 "-framework", "AudioToolbox", "-o", str(work / "noise_gui"))
         print("WAV, CLI, all surfaces, and C/C++ linkage checks passed")
