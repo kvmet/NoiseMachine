@@ -11,9 +11,17 @@
 #define THUNDER_REFERENCE_M 1000.0f
 #define THUNDER_FINE_STEP_M 3.0f
 #define THUNDER_ROUGHNESS 0.3f
+#define THUNDER_END_FADE 0.4f /* Fraction of a part that fades toward a late-arriving end. */
+#define THUNDER_DIRECT_BANDS 3u
 #define CRICKET_PULSE_DROP 0.03f /* Carrier falls through each pulse as the wing slows. */
 #define CRICKET_SINGING_S 30.0f /* Mean bout lengths. */
 #define CRICKET_SILENT_S 10.0f
+#define CICADA_LEVEL 2.0f
+#define CICADA_CHORUS_LEVEL 0.015f
+#define CICADA_CLICK 0.5f /* Band-pass ring amplitude is twice the impulse. */
+#define CICADA_JITTER 0.01f /* Click interval spread. */
+#define CICADA_DROP 0.15f /* Pitch and click rate fall through a held note's wind-down. */
+#define CICADA_SWELL_ALPHA (1.0f / (2.0f * NOISE_SAMPLE_RATE_HZ)) /* 2 s time constant. */
 
 static const unsigned reverb_length[NOISE_REVERB_LINES] = {
   739, 953, 1151, 1327, 1471, 1663
@@ -92,9 +100,12 @@ static int valid_config(const noise_config *c) {
       !in_range(c->cricket_min_distance_m, 0.25f, 100.0f) ||
       !in_range(c->cricket_max_distance_m, c->cricket_min_distance_m, 100.0f) ||
       !in_range(c->cicada_pitch_hz, 2000.0f, 10000.0f) ||
-      !in_range(c->cicada_pulse_rate_hz, 10.0f, 120.0f) ||
-      !in_range(c->cicada_texture, 0.0f, 1.0f) ||
+      (unsigned)c->cicada_species >= NOISE_CICADA_SPECIES_COUNT ||
+      !in_range(c->cicada_click_rate_scale, 0.5f, 1.5f) ||
+      !in_range(c->cicada_chorus, 0.0f, 1.0f) ||
       !in_range(c->cicada_stereo_width, 0.0f, 1.0f) ||
+      !in_range(c->cicada_min_distance_m, 0.25f, 100.0f) ||
+      !in_range(c->cicada_max_distance_m, c->cicada_min_distance_m, 100.0f) ||
       !in_range(c->thunder_gain, 0.0f, 1.0f) ||
       !in_range(c->thunder_rate_per_min, 0.0f, 20.0f) ||
       !in_range(c->thunder_min_distance_m, 200.0f, 15000.0f) ||
@@ -143,10 +154,12 @@ void noise_config_default(noise_config *c) {
   c->cricket_stereo_width = 0.8f;
   c->cricket_min_distance_m = 2.0f;
   c->cricket_max_distance_m = 15.0f;
-  c->cicada_pitch_hz = 6500.0f;
-  c->cicada_pulse_rate_hz = 45.0f;
-  c->cicada_texture = 0.35f;
+  c->cicada_pitch_hz = 5000.0f;
+  c->cicada_click_rate_scale = 1.0f;
+  c->cicada_chorus = 0.35f;
   c->cicada_stereo_width = 0.75f;
+  c->cicada_min_distance_m = 5.0f;
+  c->cicada_max_distance_m = 30.0f;
   c->thunder_rate_per_min = 2.0f;
   c->thunder_min_distance_m = 1000.0f;
   c->thunder_max_distance_m = 8000.0f;
@@ -196,6 +209,17 @@ noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t see
   gen->cricket_rng = stream_seed(seed, 0xb54cda58u);
   gen->cicada_rng = stream_seed(seed, 0x94d049bbu);
   gen->thunder_rng = stream_seed(seed, 0x2545f491u);
+  gen->thunder_echo_rng = stream_seed(seed, 0x6a09e667u);
+  uint32_t terrain_rng = stream_seed(seed, 0xbb67ae85u);
+  for (unsigned i = 0; i < NOISE_THUNDER_ECHOES; ++i) {
+    noise_reflector *reflector = &gen->reflector[i];
+    float distance = random_between(&terrain_rng, 300.0f, 2500.0f);
+    float angle = 2.0f * NOISE_PI * random_unit(&terrain_rng);
+    reflector->position[0] = distance * sinf(angle);
+    reflector->position[1] = distance * cosf(angle);
+    reflector->reflectivity = random_between(&terrain_rng, 0.3f, 0.6f);
+    reflector->smear_s = random_between(&terrain_rng, 0.1f, 0.4f);
+  }
   gen->arrival_rng = stream_seed(seed, 0x3c6ef372u);
   gen->drop_rng = stream_seed(seed, 0xdaa66d2bu);
   gen->weather_rng = stream_seed(seed, 0x78dde6e4u);
@@ -204,7 +228,9 @@ noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t see
   gen->wind_brightness_cache = -1.0f;
   gen->wind_gust_rate_cache = -1.0f;
   gen->cicada_pitch_cache = -1.0f;
-  gen->cicada_pulse_rate_cache = -1.0f;
+  gen->cicada_species_cache = -1;
+  gen->cicada_swell = 0.5f;
+  gen->cicada_swell_target = 0.5f;
   gen->thunder_reverb_decay_cache = -1.0f;
   gen->state.rain_intensity = copy.rain_intensity;
   gen->state.rain_target = copy.rain_intensity;
@@ -633,42 +659,223 @@ static float crickets_next(noise_gen *gen) {
   return send;
 }
 
-static void cicadas_next(noise_gen *gen, float *left, float *right) {
-  const float *gain = gen->config.ambient_gain;
-  if (gain[NOISE_KIND_CICADAS] <= 0.0f) return;
-  if (gen->config.cicada_pitch_hz != gen->cicada_pitch_cache) {
-    float pitch = gen->config.cicada_pitch_hz;
-    gen->cicada_pitch_cache = pitch;
-    oscillator_init(&gen->cicada_oscillator[0], pitch);
-    oscillator_init(&gen->cicada_oscillator[1], pitch * 0.983f);
-    oscillator_init(&gen->cicada_oscillator[2], pitch * 1.017f);
+static void resonator_tune(noise_resonator *resonator, float frequency, float q) {
+  float phase = 2.0f * NOISE_PI * frequency / NOISE_SAMPLE_RATE_HZ;
+  float radius = expf(-NOISE_PI * frequency / (q * NOISE_SAMPLE_RATE_HZ));
+  resonator->coefficient = 2.0f * radius * cosf(phase);
+  resonator->radius_squared = radius * radius;
+}
+
+static float resonator_next(noise_resonator *resonator, float input) {
+  float output = resonator->coefficient * resonator->state[0] -
+                 resonator->radius_squared * resonator->state[1] +
+                 input - resonator->input[1];
+  resonator->input[1] = resonator->input[0];
+  resonator->input[0] = input;
+  resonator->state[1] = resonator->state[0];
+  resonator->state[0] = output;
+  return output;
+}
+
+typedef struct cicada_song {
+  float click_rate_hz;
+  float q; /* Body resonance; a high Q rings across clicks and sounds tonal. */
+  float syllable_hz[2]; /* Syllable rate at the phrase start and end. */
+  float duty; /* Sounding fraction of each syllable period. */
+  float syllable_drop; /* Pitch fall through each syllable; negative rises. */
+  float syllables[2]; /* Syllables per phrase, inclusive range. */
+  float fade; /* Last syllable level relative to the first. */
+  float hold_s[2]; /* Held final note length range. */
+  float throb; /* Held-note pulsing depth. */
+  float gap_s; /* Mean silence between calls. */
+} cicada_song;
+
+/* Starting values from descriptions of each song, not fitted to recordings. */
+static const cicada_song cicada_songs[NOISE_CICADA_SPECIES_COUNT] = {
+  /* Dog-day: one long buzz that swells, pulses, and winds down. */
+  {300.0f, 6.0f, {1.0f, 1.0f}, 0.0f, 0.0f, {0.0f, 0.0f}, 1.0f, {10.0f, 18.0f}, 0.4f, 20.0f},
+  /* Minminzemi: rising "min" syllables, then a long falling "miiin". */
+  {400.0f, 20.0f, {3.0f, 3.0f}, 0.7f, -0.04f, {5.0f, 15.0f}, 1.0f, {1.0f, 2.0f}, 0.2f, 8.0f},
+  /* Higurashi: tonal falling "kana" pulses that slow and fade. */
+  {500.0f, 30.0f, {8.0f, 6.0f}, 0.5f, 0.05f, {20.0f, 40.0f}, 0.3f, {0.0f, 0.0f}, 0.0f, 15.0f}
+};
+
+static uint32_t cicada_swell(uint32_t hold) {
+  uint32_t limit = NOISE_SAMPLE_RATE_HZ;
+  return hold / 4u < limit ? hold / 4u : limit;
+}
+
+static uint32_t cicada_wind_down(uint32_t hold) {
+  uint32_t limit = 2u * NOISE_SAMPLE_RATE_HZ;
+  return hold / 2u < limit ? hold / 2u : limit;
+}
+
+/* Tunes the body to this cicada's pitch and glides by drop over the given frames. */
+static void cicada_tune(noise_gen *gen, noise_cicada_voice *voice, float drop, uint32_t frames) {
+  const cicada_song *song = &cicada_songs[gen->config.cicada_species];
+  float pitch = gen->config.cicada_pitch_hz * (1.0f + 0.05f * voice->pitch_offset);
+  resonator_tune(&voice->body, pitch, song->q);
+  float radius = sqrtf(voice->body.radius_squared);
+  float end = 2.0f * radius * cosf(2.0f * NOISE_PI * pitch * (1.0f - drop) /
+                                   NOISE_SAMPLE_RATE_HZ);
+  voice->glide = frames ? (end - voice->body.coefficient) / (float)frames : 0.0f;
+}
+
+static void cicada_rest(noise_gen *gen, noise_cicada_voice *voice) {
+  float gap_s = cicada_songs[gen->config.cicada_species].gap_s;
+  voice->note_length = 0;
+  voice->until_call = 1u + (uint32_t)(-gap_s * NOISE_SAMPLE_RATE_HZ *
+                                      logf(1.0f - random_unit(&gen->cicada_rng)));
+}
+
+/* Starts syllable number voice->syllable, the held note after the last, or rest. */
+static void cicada_note(noise_gen *gen, noise_cicada_voice *voice) {
+  const cicada_song *song = &cicada_songs[gen->config.cicada_species];
+  voice->note_samples = 0;
+  if (voice->syllable < voice->syllables) {
+    float progress = voice->syllables > 1 ?
+        (float)voice->syllable / (float)(voice->syllables - 1) : 0.0f;
+    float rate = song->syllable_hz[0] + progress * (song->syllable_hz[1] - song->syllable_hz[0]);
+    voice->note_length = (uint32_t)(NOISE_SAMPLE_RATE_HZ / rate);
+    voice->sounding = (uint32_t)(song->duty * (float)voice->note_length);
+    voice->holding = 0;
+    cicada_tune(gen, voice, song->syllable_drop, voice->sounding);
+    return;
   }
-  if (gen->config.cicada_pulse_rate_hz != gen->cicada_pulse_rate_cache) {
-    gen->cicada_pulse_rate_cache = gen->config.cicada_pulse_rate_hz;
-    oscillator_init(&gen->cicada_oscillator[3], gen->config.cicada_pulse_rate_hz);
+  float hold_s = random_between(&gen->cicada_rng, song->hold_s[0], song->hold_s[1]);
+  if (hold_s <= 0.0f) {
+    cicada_rest(gen, voice);
+    return;
   }
-  float common_tone = oscillator_next(&gen->cicada_oscillator[0]);
-  float side_tone[2] = {
-    oscillator_next(&gen->cicada_oscillator[1]),
-    oscillator_next(&gen->cicada_oscillator[2])
+  voice->note_length = (uint32_t)(hold_s * NOISE_SAMPLE_RATE_HZ);
+  voice->sounding = voice->note_length;
+  voice->holding = 1;
+  cicada_tune(gen, voice, CICADA_DROP, cicada_wind_down(voice->note_length));
+  oscillator_init(&voice->throb, random_between(&gen->cicada_rng, 2.0f, 4.0f));
+}
+
+static void cicada_call(noise_gen *gen, noise_cicada_voice *voice) {
+  const noise_config *c = &gen->config;
+  const cicada_song *song = &cicada_songs[c->cicada_species];
+  float near = c->cicada_min_distance_m;
+  float far = c->cicada_max_distance_m;
+  position_polar position = {
+    sqrtf(near * near + voice->distance_offset * (far * far - near * near)),
+    NOISE_PI * c->cicada_stereo_width * voice->angle_offset
   };
-  float pulse = fmaxf(0.0f, oscillator_next(&gen->cicada_oscillator[3]));
-  float envelope = 0.2f + 0.8f * pulse * pulse;
-  float width = gen->config.cicada_stereo_width;
-  float texture = gen->config.cicada_texture;
-  float common_noise = 2.0f * random_unit(&gen->cicada_rng) - 1.0f;
-  float *output[2] = {left, right};
-  for (unsigned channel = 0; channel < 2; ++channel) {
-    float side_noise = 2.0f * random_unit(&gen->cicada_rng) - 1.0f;
-    float noise = (1.0f - width) * common_noise + width * side_noise;
-    gen->cicada_noise_lowpass[channel] += 0.247949f *
-        (noise - gen->cicada_noise_lowpass[channel]);
-    float bright_noise = noise - gen->cicada_noise_lowpass[channel];
-    float tone = (1.0f - width) * common_tone + width * side_tone[channel];
-    float sample = (1.0f - 0.45f * texture) * tone +
-                   0.30f * texture * bright_noise;
-    *output[channel] += 0.22f * gain[NOISE_KIND_CICADAS] * envelope * sample;
+  spatial_init(&voice->spatial, c, position);
+  float span = song->syllables[1] - song->syllables[0] + 1.0f;
+  voice->syllables = (unsigned)(song->syllables[0] + span * random_unit(&gen->cicada_rng));
+  voice->syllable = 0;
+  memset(&voice->body, 0, sizeof(voice->body));
+  voice->until_click = 0.0f;
+  cicada_note(gen, voice);
+}
+
+/* Returns the reverb send; the direct sound goes through the spatial model. */
+static float cicada_next(noise_gen *gen, noise_cicada_voice *voice, float gain) {
+  if (!voice->note_length && --voice->until_call == 0) cicada_call(gen, voice);
+  float sample = 0.0f;
+  if (voice->note_length) {
+    const cicada_song *song = &cicada_songs[gen->config.cicada_species];
+    uint32_t t = voice->note_samples++;
+    float envelope = 0.0f;
+    float click_rate = 1.0f;
+    float impulse = 0.0f;
+    if (t < voice->sounding) {
+      if (voice->holding) {
+        float swell = (float)cicada_swell(voice->sounding);
+        float wind_down = (float)cicada_wind_down(voice->sounding);
+        float remaining = (float)(voice->sounding - voice->note_samples);
+        envelope = (float)t < swell ? (float)t / swell : 1.0f;
+        if (remaining < wind_down) {
+          float fraction = remaining / wind_down;
+          envelope *= fraction;
+          click_rate -= CICADA_DROP * (1.0f - fraction);
+          voice->body.coefficient += voice->glide;
+        }
+        envelope *= 1.0f - song->throb * 0.5f * (1.0f + oscillator_next(&voice->throb));
+      } else {
+        float x = ((float)t + 0.5f) / (float)voice->sounding;
+        float level = voice->syllables > 1 ? 1.0f + (song->fade - 1.0f) *
+            (float)voice->syllable / (float)(voice->syllables - 1) : 1.0f;
+        envelope = 4.0f * x * (1.0f - x) * level;
+        voice->body.coefficient += voice->glide;
+      }
+      voice->until_click -= click_rate;
+      if (voice->until_click <= 0.0f) {
+        impulse = CICADA_CLICK;
+        voice->until_click += NOISE_SAMPLE_RATE_HZ /
+            (song->click_rate_hz * gen->config.cicada_click_rate_scale) *
+            random_between(&gen->cicada_rng, 1.0f - CICADA_JITTER, 1.0f + CICADA_JITTER);
+      }
+    }
+    sample = CICADA_LEVEL * gain * envelope * resonator_next(&voice->body, impulse);
+    if (voice->note_samples == voice->note_length) {
+      if (voice->holding) {
+        cicada_rest(gen, voice);
+      } else {
+        ++voice->syllable;
+        cicada_note(gen, voice);
+      }
+    }
   }
+  /* Runs between calls too, so filter tails decay instead of holding. */
+  spatial_next(gen, &voice->spatial, sample);
+  return sample;
+}
+
+static void cicada_chorus_next(noise_gen *gen, float gain) {
+  const noise_config *c = &gen->config;
+  uint32_t *rng = &gen->cicada_rng;
+  /* A crowd at spread pitches blurs into a band wider than one body. */
+  float q = fmaxf(3.0f, 0.5f * cicada_songs[c->cicada_species].q);
+  if (c->cicada_pitch_hz != gen->cicada_pitch_cache ||
+      (int)c->cicada_species != gen->cicada_species_cache) {
+    gen->cicada_pitch_cache = c->cicada_pitch_hz;
+    gen->cicada_species_cache = (int)c->cicada_species;
+    for (unsigned ear = 0; ear < 2; ++ear) {
+      resonator_tune(&gen->cicada_chorus[ear], c->cicada_pitch_hz, q);
+    }
+  }
+  if (gen->cicada_swell_samples == 0) {
+    gen->cicada_swell_target = random_between(rng, 0.3f, 1.0f);
+    gen->cicada_swell_samples = 4u * NOISE_SAMPLE_RATE_HZ;
+  }
+  --gen->cicada_swell_samples;
+  gen->cicada_swell += CICADA_SWELL_ALPHA * (gen->cicada_swell_target - gen->cicada_swell);
+  /* Band-passed noise power grows with Q; this holds the level at Q 3. */
+  float level = CICADA_CHORUS_LEVEL * gain * c->cicada_chorus * gen->cicada_swell *
+                sqrtf(3.0f / q);
+  for (unsigned ear = 0; ear < 2; ++ear) {
+    float noise = 2.0f * random_unit(rng) - 1.0f;
+    gen->direct[ear][gen->direct_position] +=
+        level * resonator_next(&gen->cicada_chorus[ear], noise);
+  }
+}
+
+static float cicadas_next(noise_gen *gen) {
+  float gain = gen->config.ambient_gain[NOISE_KIND_CICADAS];
+  if (gain <= 0.0f) return 0.0f;
+  if (!gen->cicada_started) {
+    gen->cicada_started = 1;
+    uint32_t *rng = &gen->cicada_rng;
+    for (unsigned i = 0; i < NOISE_CICADA_VOICES; ++i) {
+      noise_cicada_voice *voice = &gen->cicadas[i];
+      voice->pitch_offset = random_between(rng, -1.0f, 1.0f);
+      voice->angle_offset = random_between(rng, -1.0f, 1.0f);
+      voice->distance_offset = random_unit(rng);
+      cicada_rest(gen, voice);
+    }
+    /* The layer is audible from its first frame. */
+    gen->cicadas[0].until_call = 1;
+  }
+  float send = 0.0f;
+  for (unsigned i = 0; i < NOISE_CICADA_VOICES; ++i) {
+    send += cicada_next(gen, &gen->cicadas[i], gain);
+  }
+  cicada_chorus_next(gen, gain);
+  return send;
 }
 
 static void ambient_next(noise_gen *gen, float *left, float *right) {
@@ -738,14 +945,17 @@ static void ambient_next(noise_gen *gen, float *left, float *right) {
                            0.30f * gen->wind_rumble[channel]);
     }
   }
-  cicadas_next(gen, left, right);
 }
 
 typedef struct thunder_build {
   noise_thunder_voice *voice;
   uint32_t *rng;
   float step_m; /* Mean segment length. */
+  float centroid[3]; /* Weighted by weight * length until start_thunder divides. */
+  float centroid_weight;
 } thunder_build;
+
+enum { FADE_NONE, FADE_BOTH_ENDS, FADE_TIP_END };
 
 /* RBJ cookbook coefficients; the band-pass has 0 dB peak gain. */
 static void biquad_tune(noise_biquad *filter, int bandpass, float frequency, float q) {
@@ -796,7 +1006,10 @@ static void add_thunder_segment(thunder_build *b, const float from[3], const flo
   }
   float frames_per_m = NOISE_SAMPLE_RATE_HZ / 343.0f;
   noise_thunder_segment *segment = &voice->segment[voice->segments++];
+  for (unsigned k = 0; k < 3; ++k) b->centroid[k] += weight * length_m * mid[k];
+  b->centroid_weight += weight * length_m;
   segment->start = near * frames_per_m;
+  segment->band = length3(mid); /* Range for now; start_thunder maps it to a band. */
   /* Fine steps wander in range by a random walk, so even a side-on segment spreads. */
   float wander_m = 0.28f * sqrtf(length_m * THUNDER_FINE_STEP_M);
   float spread_m = far - near;
@@ -815,8 +1028,9 @@ static void add_thunder_segment(thunder_build *b, const float from[3], const flo
 
 /* Random walk with Gaussian direction changes, pulled toward a preferred direction. */
 static void walk_thunder(thunder_build *b, float position[3], float direction[3],
-                         const float preferred[3], float path_m, float weight) {
+                         const float preferred[3], float path_m, float weight, int fade) {
   float travelled = 0.0f;
+  unsigned from = b->voice->segments;
   while (travelled < path_m && b->voice->segments < NOISE_THUNDER_SEGMENTS) {
     float step = b->step_m * random_between(b->rng, 0.5f, 1.5f);
     /* Measured: mean direction change 16.0 degrees (Hill), mean lean 28 degrees. */
@@ -832,6 +1046,22 @@ static void walk_thunder(thunder_build *b, float position[3], float direction[3]
     add_thunder_segment(b, position, next, step, weight);
     memcpy(position, next, sizeof(next));
     travelled += step;
+  }
+  /* An end whose arrivals are still getting later is where this part's sound stops.
+     Parts meeting there at full strength would stop together as a cut. */
+  unsigned to = b->voice->segments;
+  if (fade == FADE_NONE || to - from < 2u) return;
+  noise_thunder_segment *segment = b->voice->segment;
+  unsigned near_root = from + 3u < to ? from + 3u : to - 1u;
+  unsigned near_tip = to >= from + 4u ? to - 4u : from;
+  int root_late = fade == FADE_BOTH_ENDS && segment[from].start > segment[near_root].start;
+  int tip_late = segment[to - 1u].start > segment[near_tip].start;
+  for (unsigned k = from; k < to; ++k) {
+    float done = ((float)(k - from) + 0.5f) / (float)(to - from);
+    float gain = fminf(1.0f, fminf(root_late ? done : 1.0f, tip_late ? 1.0f - done : 1.0f) /
+                             THUNDER_END_FADE);
+    segment[k].gain[0] *= gain;
+    segment[k].gain[1] *= gain;
   }
 }
 
@@ -860,7 +1090,8 @@ static noise_result start_thunder(noise_gen *gen, position_polar position) {
   float cloud_path = random_between(rng, 1500.0f, 5000.0f);
   unsigned branches = 1u + random_u32(rng) % 3u;
   float branch_at[3], branch_path[3];
-  float total = main_path + cloud_path;
+  unsigned arms = 2u + random_u32(rng) % 2u;
+  float total = main_path + (float)arms * cloud_path;
   for (unsigned i = 0; i < branches; ++i) {
     branch_at[i] = random_between(rng, 0.2f, 0.9f);
     branch_path[i] = random_between(rng, 200.0f, 1200.0f);
@@ -874,7 +1105,7 @@ static noise_result start_thunder(noise_gen *gen, position_polar position) {
     }
   }
   /* Size segments so the whole channel fits the pool with a little spare. */
-  thunder_build build = {voice, rng, total / (0.95f * NOISE_THUNDER_SEGMENTS)};
+  thunder_build build = {voice, rng, total / (0.95f * NOISE_THUNDER_SEGMENTS), {0.0f}, 0.0f};
 
   /* Listener at the origin, x right, y front, z up. */
   float point[3] = {distance * sinf(position.angle_rad),
@@ -884,45 +1115,97 @@ static noise_result start_thunder(noise_gen *gen, position_polar position) {
   float branch_point[3][3], branch_direction[3][3];
   float walked = 0.0f;
   for (unsigned i = 0; i < branches; ++i) {
-    walk_thunder(&build, point, direction, up, branch_at[i] * main_path - walked, 1.0f);
+    walk_thunder(&build, point, direction, up, branch_at[i] * main_path - walked, 1.0f,
+                 FADE_NONE);
     walked = branch_at[i] * main_path;
     memcpy(branch_point[i], point, sizeof(point));
     memcpy(branch_direction[i], direction, sizeof(direction));
   }
-  walk_thunder(&build, point, direction, up, main_path - walked, 1.0f);
+  walk_thunder(&build, point, direction, up, main_path - walked, 1.0f, FADE_TIP_END);
 
+  /* In-cloud arms spread in heading, so some arm usually arrives after the channel top.
+     They add incoherently, so each gets weight / sqrt(arms). */
   float heading = 2.0f * NOISE_PI * random_unit(rng);
-  float level[3] = {cosf(heading), sinf(heading), 0.0f};
-  memcpy(direction, level, sizeof(level));
-  walk_thunder(&build, point, direction, level, cloud_path, 0.6f);
+  float top[3];
+  memcpy(top, point, sizeof(top));
+  for (unsigned arm = 0; arm < arms; ++arm) {
+    float h = heading + 2.0f * NOISE_PI * ((float)arm + random_between(rng, -0.25f, 0.25f)) /
+              (float)arms;
+    float level[3] = {cosf(h), sinf(h), 0.0f};
+    memcpy(point, top, sizeof(top));
+    memcpy(direction, level, sizeof(level));
+    walk_thunder(&build, point, direction, level, cloud_path, 0.6f / sqrtf((float)arms),
+                 FADE_BOTH_ENDS);
+  }
 
   for (unsigned i = 0; i < branches; ++i) {
     float outward = 2.0f * NOISE_PI * random_unit(rng);
     float down[3] = {0.64f * cosf(outward), 0.64f * sinf(outward), -0.77f};
-    walk_thunder(&build, branch_point[i], branch_direction[i], down, branch_path[i], 0.4f);
+    walk_thunder(&build, branch_point[i], branch_direction[i], down, branch_path[i], 0.4f,
+                 FADE_BOTH_ENDS);
   }
 
   qsort(voice->segment, voice->segments, sizeof(voice->segment[0]),
         compare_thunder_segments);
   float first = voice->segment[0].start;
   float last = 0.0f;
+  float nearest = voice->segment[0].band, farthest = nearest;
   for (unsigned i = 0; i < voice->segments; ++i) {
     voice->segment[i].start -= first;
     float end = voice->segment[i].start + voice->segment[i].width;
     if (end > last) last = end;
+    nearest = fminf(nearest, voice->segment[i].band);
+    farthest = fmaxf(farthest, voice->segment[i].band);
   }
-  /* N-waves last 6 to 14 ms at 1 km and lengthen with the fourth root of distance. */
-  float period_s = 0.001f * random_between(rng, 6.0f, 14.0f) *
-                   sqrtf(sqrtf(distance / THUNDER_REFERENCE_M));
-  float air_cutoff = fminf(6000.0f, fmaxf(150.0f, 1000.0f *
-      powf(THUNDER_REFERENCE_M / distance, 0.6f)));
-  for (unsigned channel = 0; channel < 2; ++channel) {
-    biquad_tune(&voice->pulse[channel], 1, 1.0f / period_s, 0.7f);
-    biquad_tune(&voice->air[channel][0], 0, air_cutoff, 0.5411961f);
-    biquad_tune(&voice->air[channel][1], 0, air_cutoff, 1.3065630f);
+  /* Direct bands are evenly spaced in log range. */
+  float span = logf(farthest / nearest);
+  float bands_per_log = span > 0.0f ? (THUNDER_DIRECT_BANDS - 1u) / span : 0.0f;
+  for (unsigned i = 0; i < voice->segments; ++i) {
+    voice->segment[i].band = bands_per_log * logf(voice->segment[i].band / nearest);
+  }
+  voice->span_log = span;
+
+  /* Each reflector returns the whole strike, delayed by its extra path from the channel's
+     centroid, from its own direction, with spherical spreading over the longer path. */
+  float centre[3];
+  for (unsigned k = 0; k < 3; ++k) centre[k] = build.centroid[k] / build.centroid_weight;
+  float direct_m = length3(centre);
+  float widest = 1.0f, latest = 0.0f;
+  for (unsigned i = 0; i < NOISE_THUNDER_ECHOES; ++i) {
+    const noise_reflector *reflector = &gen->reflector[i];
+    noise_thunder_echo *echo = &voice->echo[i];
+    float ground[3] = {reflector->position[0], reflector->position[1], 0.0f};
+    float out[3] = {centre[0] - ground[0], centre[1] - ground[1], centre[2]};
+    float path_m = length3(out) + length3(ground);
+    echo->delay = (path_m - direct_m) * NOISE_SAMPLE_RATE_HZ / 343.0f;
+    echo->smear = reflector->smear_s * NOISE_SAMPLE_RATE_HZ;
+    echo->range_log = logf(path_m / direct_m);
+    float amplitude = reflector->reflectivity * direct_m / path_m;
+    float pan = 0.25f * NOISE_PI * (1.0f + ground[0] / length3(ground));
+    echo->gain[0] = amplitude * cosf(pan);
+    echo->gain[1] = amplitude * sinf(pan);
+    widest = fmaxf(widest, path_m / direct_m);
+    latest = fmaxf(latest, echo->delay + echo->smear);
+  }
+  voice->echo_span_log = logf(widest);
+  /* Later arrivals travel farther, so the tail is darker and its N-waves longer.
+     N-waves last 6 to 14 ms at 1 km and lengthen with the fourth root of distance. */
+  float period_1km_s = 0.001f * random_between(rng, 6.0f, 14.0f);
+  for (unsigned band = 0; band < NOISE_THUNDER_BANDS; ++band) {
+    float band_m = band < THUNDER_DIRECT_BANDS ?
+        distance * expf(span * band / (THUNDER_DIRECT_BANDS - 1u)) :
+        distance * expf(span + voice->echo_span_log);
+    float period_s = period_1km_s * sqrtf(sqrtf(band_m / THUNDER_REFERENCE_M));
+    float air_cutoff = fminf(6000.0f, fmaxf(150.0f, 1000.0f *
+        powf(THUNDER_REFERENCE_M / band_m, 0.6f)));
+    for (unsigned channel = 0; channel < 2; ++channel) {
+      biquad_tune(&voice->pulse[band][channel], 1, 1.0f / period_s, 0.7f);
+      biquad_tune(&voice->air[band][channel][0], 0, air_cutoff, 0.5411961f);
+      biquad_tune(&voice->air[band][channel][1], 0, air_cutoff, 1.3065630f);
+    }
   }
   /* 4096 frames let the filters ring out after the last arrival. */
-  voice->length = (uint32_t)last + 4096u;
+  voice->length = (uint32_t)(last + latest) + 4096u;
   return NOISE_OK;
 }
 
@@ -935,7 +1218,29 @@ noise_result noise_trigger_thunder(noise_gen *gen, const thunder_strike *strike)
   return start_thunder(gen, strike->position);
 }
 
-static void thunder_voice_next(uint32_t *rng, noise_thunder_voice *voice, float out[2]) {
+/* Adds a segment's box to the two bands nearest its range position. */
+static void add_to_bands(float excitation[NOISE_THUNDER_BANDS][2], float position,
+                         const float amount[2]) {
+  position = fminf(fmaxf(position, 0.0f), NOISE_THUNDER_BANDS - 1.0f);
+  unsigned band = (unsigned)position;
+  if (band > NOISE_THUNDER_BANDS - 2u) band = NOISE_THUNDER_BANDS - 2u;
+  float upper = position - (float)band;
+  for (unsigned channel = 0; channel < 2; ++channel) {
+    excitation[band][channel] += (1.0f - upper) * amount[channel];
+    excitation[band + 1][channel] += upper * amount[channel];
+  }
+}
+
+/* Echo paths inside the direct span use the direct bands; longer ones reach band 3. */
+static float echo_band(const noise_thunder_voice *voice, float band, float range_log) {
+  float span = voice->span_log;
+  float u = band * span / (THUNDER_DIRECT_BANDS - 1u) + range_log;
+  if (u <= span) return span > 0.0f ? (THUNDER_DIRECT_BANDS - 1u) * u / span : 0.0f;
+  return (THUNDER_DIRECT_BANDS - 1u) + (u - span) / voice->echo_span_log;
+}
+
+static void thunder_voice_next(uint32_t *rng, uint32_t *echo_rng, noise_thunder_voice *voice,
+                               float out[2]) {
   float t = (float)voice->elapsed;
   const noise_thunder_segment *segment = voice->segment;
   while (voice->next < voice->segments && segment[voice->next].start < t + 1.0f) {
@@ -946,19 +1251,45 @@ static void thunder_voice_next(uint32_t *rng, noise_thunder_voice *voice, float 
     ++voice->first;
   }
   /* Each segment adds a box over its arrival spread; the filters shape it into pulses. */
-  float excitation[2] = {0.0f, 0.0f};
+  float excitation[NOISE_THUNDER_BANDS][2] = {{0.0f}};
   for (unsigned i = voice->first; i < voice->next; ++i) {
     float x = t - segment[i].start;
     float overlap = fminf(x + 1.0f, segment[i].width) - fmaxf(x, 0.0f);
     if (overlap <= 0.0f) continue;
     float share = overlap + segment[i].roughness * random_gaussian(rng) * sqrtf(overlap);
-    excitation[0] += segment[i].gain[0] * share;
-    excitation[1] += segment[i].gain[1] * share;
+    float amount[2] = {segment[i].gain[0] * share, segment[i].gain[1] * share};
+    add_to_bands(excitation, segment[i].band, amount);
+  }
+  /* An echo spreads each box over its smear at the same total energy. */
+  for (unsigned e = 0; e < NOISE_THUNDER_ECHOES; ++e) {
+    noise_thunder_echo *echo = &voice->echo[e];
+    float te = t - echo->delay;
+    while (echo->next < voice->segments && segment[echo->next].start < te + 1.0f) {
+      ++echo->next;
+    }
+    while (echo->first < echo->next &&
+           te >= segment[echo->first].start + segment[echo->first].width + echo->smear) {
+      ++echo->first;
+    }
+    for (unsigned i = echo->first; i < echo->next; ++i) {
+      float width = segment[i].width + echo->smear;
+      float x = te - segment[i].start;
+      float overlap = fminf(x + 1.0f, width) - fmaxf(x, 0.0f);
+      if (overlap <= 0.0f) continue;
+      float share = segment[i].width / width *
+          (overlap + segment[i].roughness * random_gaussian(echo_rng) * sqrtf(overlap));
+      float level = hypotf(segment[i].gain[0], segment[i].gain[1]) * share;
+      float amount[2] = {echo->gain[0] * level, echo->gain[1] * level};
+      add_to_bands(excitation, echo_band(voice, segment[i].band, echo->range_log), amount);
+    }
   }
   for (unsigned channel = 0; channel < 2; ++channel) {
-    float pulse = biquad_next(&voice->pulse[channel], excitation[channel]);
-    out[channel] = biquad_next(&voice->air[channel][1],
-                               biquad_next(&voice->air[channel][0], pulse));
+    out[channel] = 0.0f;
+    for (unsigned band = 0; band < NOISE_THUNDER_BANDS; ++band) {
+      float pulse = biquad_next(&voice->pulse[band][channel], excitation[band][channel]);
+      out[channel] += biquad_next(&voice->air[band][channel][1],
+                                  biquad_next(&voice->air[band][channel][0], pulse));
+    }
   }
   if (++voice->elapsed == voice->length) voice->length = 0;
 }
@@ -1056,7 +1387,7 @@ static void thunder_next(noise_gen *gen, float *left, float *right) {
   for (unsigned i = 0; i < NOISE_THUNDER_VOICES; ++i) {
     if (!gen->thunder[i].length) continue;
     float out[2];
-    thunder_voice_next(&gen->thunder_rng, &gen->thunder[i], out);
+    thunder_voice_next(&gen->thunder_rng, &gen->thunder_echo_rng, &gen->thunder[i], out);
     sum[0] += c->thunder_gain * out[0];
     sum[1] += c->thunder_gain * out[1];
   }
@@ -1136,6 +1467,7 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
       }
     }
     send += crickets_next(gen);
+    send += cicadas_next(gen);
     left = gen->direct[0][gen->direct_position];
     right = gen->direct[1][gen->direct_position];
     gen->direct[0][gen->direct_position] = 0.0f;

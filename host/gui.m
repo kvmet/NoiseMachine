@@ -29,9 +29,11 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlCricketMaxDistance,
   NoiseControlCicadaGain,
   NoiseControlCicadaPitch,
-  NoiseControlCicadaPulseRate,
-  NoiseControlCicadaTexture,
+  NoiseControlCicadaClickRate,
+  NoiseControlCicadaChorus,
   NoiseControlCicadaWidth,
+  NoiseControlCicadaMinDistance,
+  NoiseControlCicadaMaxDistance,
   NoiseControlThunderGain,
   NoiseControlThunderRate,
   NoiseControlThunderMinDistance,
@@ -105,6 +107,14 @@ static void apply_startup_settings(noise_config *c) {
   c->cricket_pitch_hz = 4500.0f;
   c->cricket_pitch_variation = 0.24f;
   c->cricket_stereo_width = 1.00f;
+  c->ambient_gain[NOISE_KIND_CICADAS] = 0.26f;
+  c->cicada_species = CICADA_HIGURASHI;
+  c->cicada_pitch_hz = 5000.0f;
+  c->cicada_click_rate_scale = 0.51f;
+  c->cicada_chorus = 0.69f;
+  c->cicada_stereo_width = 1.00f;
+  c->cicada_min_distance_m = 1.205f;
+  c->cicada_max_distance_m = 13.346f;
   c->vary_rain = 1;
   c->rain_intensity = 0.84f;
   c->min_rain_intensity = 0.15f;
@@ -218,6 +228,7 @@ static OSStatus export_m4a(NSURL *url, const noise_config *config, uint32_t seed
   noise_gen _generator;
   _Atomic(float) _controls[NoiseControlCount];
   _Atomic(int) _varyRain;
+  _Atomic(int) _cicadaSpecies;
   _Atomic(float) _strikeDistance;
   _Atomic(float) _strikeAngle;
   _Atomic(int) _strikeRequested;
@@ -261,9 +272,13 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   config.cricket_max_distance_m = [self controlValue:NoiseControlCricketMaxDistance];
   config.ambient_gain[NOISE_KIND_CICADAS] = [self controlValue:NoiseControlCicadaGain];
   config.cicada_pitch_hz = [self controlValue:NoiseControlCicadaPitch];
-  config.cicada_pulse_rate_hz = [self controlValue:NoiseControlCicadaPulseRate];
-  config.cicada_texture = [self controlValue:NoiseControlCicadaTexture];
+  config.cicada_species =
+      (cicada_species)atomic_load_explicit(&_cicadaSpecies, memory_order_relaxed);
+  config.cicada_click_rate_scale = [self controlValue:NoiseControlCicadaClickRate];
+  config.cicada_chorus = [self controlValue:NoiseControlCicadaChorus];
   config.cicada_stereo_width = [self controlValue:NoiseControlCicadaWidth];
+  config.cicada_min_distance_m = [self controlValue:NoiseControlCicadaMinDistance];
+  config.cicada_max_distance_m = [self controlValue:NoiseControlCicadaMaxDistance];
   config.thunder_gain = [self controlValue:NoiseControlThunderGain];
   config.thunder_rate_per_min = [self controlValue:NoiseControlThunderRate];
   config.thunder_min_distance_m = [self controlValue:NoiseControlThunderMinDistance];
@@ -429,7 +444,8 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   }
   if (control == NoiseControlStereoWidth || control == NoiseControlMinDistance ||
       control == NoiseControlMaxDistance || control == NoiseControlCricketMinDistance ||
-      control == NoiseControlCricketMaxDistance) {
+      control == NoiseControlCricketMaxDistance || control == NoiseControlCicadaMinDistance ||
+      control == NoiseControlCicadaMaxDistance) {
     return [NSString stringWithFormat:@"%.3f", value];
   }
   return [NSString stringWithFormat:@"%.2f", value];
@@ -478,6 +494,12 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   } else if (control == NoiseControlCricketMaxDistance &&
              value < [self controlValue:NoiseControlCricketMinDistance]) {
     [self storeControl:NoiseControlCricketMinDistance value:value];
+  } else if (control == NoiseControlCicadaMinDistance &&
+             value > [self controlValue:NoiseControlCicadaMaxDistance]) {
+    [self storeControl:NoiseControlCicadaMaxDistance value:value];
+  } else if (control == NoiseControlCicadaMaxDistance &&
+             value < [self controlValue:NoiseControlCicadaMinDistance]) {
+    [self storeControl:NoiseControlCicadaMinDistance value:value];
   } else if (control == NoiseControlThunderMinDistance &&
              value > [self controlValue:NoiseControlThunderMaxDistance]) {
     [self storeControl:NoiseControlThunderMaxDistance value:value];
@@ -598,6 +620,10 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 - (void)controlTextDidEndEditing:(NSNotification *)notification {
   NSTextField *field = notification.object;
   if (field.tag >= 0 && field.tag < NoiseControlCount) [self valueFieldChanged:field];
+}
+
+- (void)cicadaSpeciesChanged:(NSPopUpButton *)sender {
+  atomic_store_explicit(&_cicadaSpecies, (int)sender.indexOfSelectedItem, memory_order_relaxed);
 }
 
 - (void)varyChanged:(NSButton *)sender {
@@ -761,6 +787,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
     return;
   }
   atomic_init(&_varyRain, defaults.vary_rain);
+  atomic_init(&_cicadaSpecies, (int)defaults.cicada_species);
   atomic_init(&_strikeDistance, defaults.thunder_min_distance_m);
   atomic_init(&_strikeAngle, 0.0f);
   atomic_init(&_strikeRequested, 0);
@@ -812,6 +839,18 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                  value:defaults.wind_stereo_width minimum:0 maximum:1 logarithmic:NO]
   ]];
 
+  NSTextField *speciesLabel = [NSTextField labelWithString:@"Species"];
+  speciesLabel.alignment = NSTextAlignmentRight;
+  [speciesLabel.widthAnchor constraintEqualToConstant:145.0].active = YES;
+  NSPopUpButton *speciesMenu = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+  [speciesMenu addItemsWithTitles:@[@"Dog-day", @"Minminzemi", @"Higurashi"]];
+  [speciesMenu selectItemAtIndex:defaults.cicada_species];
+  speciesMenu.target = self;
+  speciesMenu.action = @selector(cicadaSpeciesChanged:);
+  NSStackView *cicadaSpeciesRow = [NSStackView stackViewWithViews:@[speciesLabel, speciesMenu]];
+  cicadaSpeciesRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+  cicadaSpeciesRow.spacing = 10.0;
+
   NSView *insects = [self tabViewWithRows:@[
       [self sectionLabel:@"Crickets"],
       [self sliderRow:@"Gain" control:NoiseControlCricketGain
@@ -830,17 +869,22 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
       [self sliderRow:@"Max distance (m)" control:NoiseControlCricketMaxDistance
                  value:defaults.cricket_max_distance_m minimum:0.25 maximum:100 logarithmic:YES],
       [self sectionLabel:@"Cicadas"],
+      cicadaSpeciesRow,
       [self sliderRow:@"Gain" control:NoiseControlCicadaGain
                  value:defaults.ambient_gain[NOISE_KIND_CICADAS]
                minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Pitch (Hz)" control:NoiseControlCicadaPitch
                  value:defaults.cicada_pitch_hz minimum:2000 maximum:10000 logarithmic:YES],
-      [self sliderRow:@"Pulse rate (Hz)" control:NoiseControlCicadaPulseRate
-                 value:defaults.cicada_pulse_rate_hz minimum:10 maximum:120 logarithmic:YES],
-      [self sliderRow:@"Texture" control:NoiseControlCicadaTexture
-                 value:defaults.cicada_texture minimum:0 maximum:1 logarithmic:NO],
-      [self sliderRow:@"Stereo width" control:NoiseControlCicadaWidth
-                 value:defaults.cicada_stereo_width minimum:0 maximum:1 logarithmic:NO]
+      [self sliderRow:@"Click rate ×" control:NoiseControlCicadaClickRate
+                 value:defaults.cicada_click_rate_scale minimum:0.5 maximum:1.5 logarithmic:NO],
+      [self sliderRow:@"Distant chorus" control:NoiseControlCicadaChorus
+                 value:defaults.cicada_chorus minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Angular spread" control:NoiseControlCicadaWidth
+                 value:defaults.cicada_stereo_width minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Min distance (m)" control:NoiseControlCicadaMinDistance
+                 value:defaults.cicada_min_distance_m minimum:0.25 maximum:100 logarithmic:YES],
+      [self sliderRow:@"Max distance (m)" control:NoiseControlCicadaMaxDistance
+                 value:defaults.cicada_max_distance_m minimum:0.25 maximum:100 logarithmic:YES]
   ]];
 
   NSButton *strikeButton = [NSButton buttonWithTitle:@"Strike"

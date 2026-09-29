@@ -15,8 +15,11 @@ extern "C" {
 #define NOISE_REVERB_SAMPLES 7304u
 #define NOISE_DIRECT_SAMPLES 128u
 #define NOISE_CRICKET_VOICES 4u
+#define NOISE_CICADA_VOICES 4u
 #define NOISE_THUNDER_VOICES 2u
 #define NOISE_THUNDER_SEGMENTS 256u
+#define NOISE_THUNDER_BANDS 4u /* Three span the channel's range; one holds echoes. */
+#define NOISE_THUNDER_ECHOES 6u
 #define NOISE_THUNDER_REVERB_SAMPLES 6132u
 
 typedef enum noise_kind {
@@ -63,6 +66,13 @@ typedef enum weather_mod_destination {
   NOISE_WEATHER_MOD_COUNT
 } weather_mod_destination;
 
+typedef enum cicada_species {
+  CICADA_DOG_DAY = 0,
+  CICADA_MINMINZEMI,
+  CICADA_HIGURASHI,
+  NOISE_CICADA_SPECIES_COUNT
+} cicada_species;
+
 typedef enum noise_result {
   NOISE_OK = 0,
   NOISE_INVALID_CONFIG,
@@ -100,10 +110,13 @@ typedef struct noise_config {
   float cricket_stereo_width; /* Angular spread: 0 all in front, 1 all around. */
   float cricket_min_distance_m;
   float cricket_max_distance_m;
+  cicada_species cicada_species;
   float cicada_pitch_hz;
-  float cicada_pulse_rate_hz;
-  float cicada_texture;
-  float cicada_stereo_width;
+  float cicada_click_rate_scale; /* 0.5..1.5 times the species' tymbal click rate. */
+  float cicada_chorus; /* Level of the distant chorus under the individuals. */
+  float cicada_stereo_width; /* Angular spread: 0 all in front, 1 all around. */
+  float cicada_min_distance_m;
+  float cicada_max_distance_m;
   float thunder_gain;
   float thunder_rate_per_min; /* Automatic strikes; zero allows only manual strikes. */
   float thunder_min_distance_m;
@@ -126,7 +139,7 @@ typedef struct noise_config {
   float stereo_width_m; /* Ear spacing; sphere radius is half this width. */
   float head_amount; /* 0: spaced microphones, 1: spherical head. */
   float rear_amount; /* 0: bypass rear filter, 1: full rear filter. */
-  float reverb_gain; /* Rain and cricket sends are before distance attenuation. */
+  float reverb_gain; /* Rain and insect sends are before distance attenuation. */
   float water_impact_gain_min;
   float water_impact_gain_max;
   float water_bubble_probability;
@@ -186,17 +199,60 @@ typedef struct noise_cricket_voice {
   uint32_t bout_samples; /* Frames left in the singing or silent bout. */
 } noise_cricket_voice;
 
+/* Two-pole band-pass: y = coefficient y1 - radius^2 y2 + x - x2. */
+typedef struct noise_resonator {
+  float coefficient;
+  float radius_squared;
+  float state[2];
+  float input[2];
+} noise_resonator;
+
+/* One persistent cicada; its offsets scale with the live config at each call. */
+typedef struct noise_cicada_voice {
+  noise_resonator body; /* Abdomen resonance rung by each tymbal click. */
+  noise_oscillator throb;
+  noise_spatial spatial;
+  float glide; /* Body coefficient step per frame while the pitch moves. */
+  float pitch_offset; /* -1..1 */
+  float angle_offset; /* -1..1, times pi times stereo width. */
+  float distance_offset; /* 0..1, area-uniform between the distance bounds. */
+  float until_click; /* Frames. */
+  unsigned syllable; /* Index in the phrase. */
+  unsigned syllables; /* In the phrase; the held note follows the last. */
+  unsigned holding; /* The current note is the held note. */
+  uint32_t note_samples; /* Frames into the current syllable or held note. */
+  uint32_t note_length; /* Zero while silent. */
+  uint32_t sounding; /* Frames of the note that sound; the rest is a gap. */
+  uint32_t until_call;
+} noise_cicada_voice;
+
 typedef struct noise_thunder_segment {
   float start; /* Frames after the strike's first arrival. */
   float width; /* Arrival spread between the segment's ends, frames. */
   float gain[2]; /* Per channel, divided by width. */
   float roughness; /* Fine-tortuosity noise per sqrt(frame), relative to gain. */
+  float band; /* Direct range position, 0 to 2; fractions blend neighbours. */
 } noise_thunder_segment;
 
 typedef struct noise_biquad {
   float b0, b1, b2, a1, a2;
   float state[2];
 } noise_biquad;
+
+typedef struct noise_reflector {
+  float position[2]; /* Ground point, x right and y front, metres. */
+  float reflectivity; /* Pressure ratio. */
+  float smear_s; /* Arrival spread added by terrain roughness. */
+} noise_reflector;
+
+typedef struct noise_thunder_echo {
+  float delay; /* Frames after the direct arrival. */
+  float smear; /* Frames added to each segment's arrival spread. */
+  float range_log; /* Log of echo path over direct path. */
+  float gain[2];
+  unsigned first;
+  unsigned next;
+} noise_thunder_echo;
 
 typedef struct noise_thunder_voice {
   noise_thunder_segment segment[NOISE_THUNDER_SEGMENTS]; /* Sorted by start. */
@@ -205,8 +261,13 @@ typedef struct noise_thunder_voice {
   unsigned next; /* Segments from this index have not arrived. */
   uint32_t elapsed;
   uint32_t length; /* Zero marks a free voice. */
-  noise_biquad pulse[2]; /* Band-pass at 1/period shapes excitation into N-waves. */
-  noise_biquad air[2][2]; /* Fourth-order Butterworth low-pass per channel. */
+  /* Per range band: band-pass at 1/period shapes excitation into N-waves, then a
+     fourth-order Butterworth air low-pass per channel. */
+  noise_biquad pulse[NOISE_THUNDER_BANDS][2];
+  noise_biquad air[NOISE_THUNDER_BANDS][2][2];
+  noise_thunder_echo echo[NOISE_THUNDER_ECHOES];
+  float span_log; /* Log of farthest over nearest direct segment range. */
+  float echo_span_log; /* Log of the widest echo path ratio; band 3 sits there. */
 } noise_thunder_voice;
 
 typedef struct noise_drop_voice {
@@ -239,6 +300,7 @@ typedef struct noise_gen {
   uint32_t cricket_rng;
   uint32_t cicada_rng;
   uint32_t thunder_rng;
+  uint32_t thunder_echo_rng;
   uint32_t arrival_rng;
   uint32_t drop_rng;
   uint32_t weather_rng;
@@ -254,11 +316,16 @@ typedef struct noise_gen {
   uint32_t wind_gust_samples;
   noise_cricket_voice crickets[NOISE_CRICKET_VOICES];
   unsigned cricket_started;
-  noise_oscillator cicada_oscillator[4];
-  float cicada_noise_lowpass[2];
+  noise_cicada_voice cicadas[NOISE_CICADA_VOICES];
+  unsigned cicada_started;
+  noise_resonator cicada_chorus[2]; /* Independent per ear. */
+  int cicada_species_cache;
   float cicada_pitch_cache;
-  float cicada_pulse_rate_cache;
+  float cicada_swell;
+  float cicada_swell_target;
+  uint32_t cicada_swell_samples;
   noise_thunder_voice thunder[NOISE_THUNDER_VOICES];
+  noise_reflector reflector[NOISE_THUNDER_ECHOES]; /* Fixed per seed: every strike echoes off the same terrain. */
   unsigned thunder_started;
   float thunder_reverb[NOISE_THUNDER_REVERB_SAMPLES];
   unsigned thunder_reverb_position[NOISE_REVERB_LINES];

@@ -9,8 +9,9 @@ of calibrated acoustic pressure or a full fluid simulation.
 
 Each rain arrival creates up to three damped modes: an impact and either a
 water bubble or two material modes. Their sum feeds the direct stereo path
-and a shared reverb. Thunder joins the direct mix and sends its clap to the
-same reverb. Ambient layers join the stereo mix after the reverb.
+and a shared reverb. Crickets and cicadas use the same direct path and
+reverb. Thunder has its own reverb and limiter, then joins the direct mix.
+Ambient layers join the stereo mix after the reverb.
 `rain_gain` scales both direct rain and the reverb send. `master_gain` scales
 the final output before conversion to PCM.
 
@@ -70,11 +71,36 @@ cricket signal before distance attenuation feeds the rain reverb, like the rain
 send. Pitch changes apply at the next pulse; position and rate changes apply at
 the next chirp.
 
-Cicadas use three slightly detuned carrier oscillators. A fourth oscillator
-amplitude-modulates the chorus at the configured pulse rate. Texture blends in
-high-pass noise. Stereo width crossfades between the common carrier and two
-detuned side carriers, and between common and independent noise. Crickets and
-cicadas use separate random streams and do not allocate rain voices.
+Cicadas are four persistent individuals of one species over a distant chorus.
+A cicada buckles its tymbals many times a second; each buckle is a click that
+rings the abdomen. Each individual is a click train through a two-pole
+band-pass at its body pitch: the configured pitch plus a fixed offset of up to
+5 percent per cicada. Click intervals vary 1 percent at random. The click
+rate control scales each species' own rate by 0.5 to 1.5.
+
+Each species sings phrases of syllables and an optional held final note. Each
+syllable's level rises and falls as a parabola while its pitch glides. A held
+note swells in over up to 1 s, pulses at 2 to 4 Hz, then winds down over up
+to 2 s while level falls to zero and pitch and click rate fall 15 percent.
+Silence between calls is exponential. The values below are starting points
+from descriptions of each song, not fitted to recordings.
+
+| | Dog-day | Minminzemi | Higurashi |
+|---|---|---|---|
+| Clicks/s | 300 | 400 | 500 |
+| Body Q | 6, a buzz | 20, tonal | 30, near a whistle |
+| Syllables | none | 5 to 15 at 3/s, 70% sounding, rising 4% | 20 to 40 slowing from 8/s to 6/s, 50% sounding, falling 5%, fading to 0.3 |
+| Held note | 10 to 18 s, 40% pulsing | 1 to 2 s, 20% pulsing | none |
+| Mean gap | 20 s | 8 s | 15 s |
+
+Each individual uses the same spatial model and reverb send as a cricket, with
+its own distance bounds; stereo width is angular spread.
+
+The distant chorus is uniform noise through the same band-pass at the
+configured pitch, independent in each ear, with Q half the species' body Q
+and at least 3. Its level follows a random target every 4 s with a 2 s time
+constant. It bypasses the spatial model and the reverb. Crickets and cicadas use separate random
+streams and do not allocate rain voices.
 
 ## Rain arrivals and size distribution
 
@@ -376,64 +402,101 @@ gain zero, the network is bypassed.
 
 ## Thunder
 
-Thunder is a triggered event, not a continuous layer. The model follows the
-four signal-based components of Fineberg, Walters, and Reiss [7, sections 3.1
-to 3.4], including their post-survey revisions [7, section 6.1]. Every
-component starts from uniform white noise and ends with a linear ramp to zero.
+Thunder is a triggered event, not a continuous layer. The model follows
+Ribner and Roy [7]: a tortuous lightning channel is a chain of short
+segments, and each segment emits an N-wave. A segment seen side-on delivers
+its whole length at once and gives a sharp boom. A segment seen end-on
+spreads its energy over its arrival spread and gives a roll. The sum over
+the channel, in arrival order, is the thunder signature.
 
-- Clap: 1 to 5 strikes. The first starts at once; the others start uniformly
-  within the first second. Each strike samples r uniform in [0, 1). Its
-  band-pass centre is 80 + 1200r Hz with Q 7, and the centre falls linearly
-  to half over the strike. Its length is 240(1.4 - r)^5 ms, from 2.45 ms to
-  1.29 s. Even strikes filter a noise burst. Odd strikes filter about 20
-  impulses at random frames; each impulse has amplitude sqrt(length/60), so
-  both kinds carry the same expected energy.
-- Rumbler: two low-passed noise streams. The first is half-wave rectified.
-  A sample-and-hold captures the second at 1 + 2.5g Hz, where g falls from
-  1 to 0 with the gain ramp. The engine multiplies the two; the paper does not
-  say how they combine. A 20 Hz DC blocker removes the rectifier's offset. The
-  gain ramp lasts 9 s. The cutoff starts near 1 kHz and falls over 12 s, so it
-  ends at a quarter of its start value when the gain reaches zero.
-- Afterimage: noise low-passed at 33 Hz, falling to 1 Hz, times 80, times a
-  second noise, clipped to [-1, 1], then band-passed at 333 Hz with Q 4. The
-  gain ramp lasts 14 s.
-- Deepener: low-pass 60 Hz, then high-pass 30 Hz, both Q 3; times 3.5,
-  clipped to [-1, 1], then low-pass 80 Hz with Q 3. The gain ramp lasts 18.5 s.
+Each strike builds a new channel with the listener at the origin, x right,
+y front, and z up. The channel base sits on the ground at the strike
+distance and azimuth.
 
-The biquads use the RBJ cookbook forms. Time-varying cutoffs recompute every
-32 frames to keep trigonometry out of the per-sample path.
+- Main channel: height 1.5 to 4 km; path length 1.15 times the height.
+- Ground branches: 1 to 3. Each leaves the main channel at 20% to 90% of
+  its path, runs 200 to 1200 m, and leans down and outward at weight 0.4.
+- In-cloud arms: 2 or 3, each 1.5 to 5 km, all leaving the channel top.
+  Arm headings are evenly spaced with a random offset of up to a quarter
+  of the spacing, so some arm usually arrives after the channel top. Arms
+  add incoherently, so each has weight 0.6/sqrt(arms).
 
-The paper's listeners found deterministic envelopes and regular timing less
-realistic [7, section 5.2]. Each strike therefore samples its strike count,
-timings, and clap gains. It also scales each component's ramp length by
-0.75 to 1.25, its gain by 0.7 to 1.3, the rumble cutoff by 0.7 to 1.3, and
-the afterimage centre by 0.85 to 1.15. Component mix weights are sound design levels; the paper gives
-no absolute gains for this filter chain. At 1 km and thunder gain one, the
-worst peak over 20 seeds is about 0.68 of full scale.
+Every part is a random walk. Each step adds a Gaussian direction change
+and a pull toward its preferred direction: up for the main channel, level
+for arms, and down and outward for branches. This gives a mean direction
+change of 16 degrees, as Hill measured [8], and a mean lean of 28 degrees.
+Step length is uniform in 0.5 to 1.5 times a mean that fits the whole
+channel into 256 segments with 5% spare.
 
-Distance d, from 200 m to 15 km, sets a level `min(1, 1000/d)`. The rumbler,
-afterimage, and deepener use that level; the clap uses its square, so a strike
-8 km away is almost all rumble. A one-pole low-pass on the clap stands in for
-air absorption, with cutoff `2×10^6/d` Hz limited to 250 to 8000 Hz. The
-paper's distance delay adds silence before an event with no visual flash, so
-the engine does not use it.
+A part's sound stops at any end where its arrivals are still getting
+later. If parts stop there at full strength, the roll ends with a cut, and
+the cut lands in one ear before the other. Arms that head back toward the
+listener pass nearly overhead, so their arrivals pile up just before the
+channel top's and stop with it. Each part therefore fades to zero over 40%
+of its segments toward every such end: the main channel toward its top,
+and arms and branches toward either end. An arm heading away keeps full
+strength at the top, so it takes over from the parts that stop there.
 
-A constant-power pan places each strike by azimuth: the pan angle is
-`π/4 × (1 + sin φ)`. The clap is mono before the pan. The rumbler,
-afterimage, and deepener draw independent noise for each channel, which makes
-them wide. Drops keep the spherical-head model; at kilometre distances its
-cues reduce to level and delay a pan already supplies. The clap alone sends
-to the shared reverb, scaled by thunder gain.
+Each segment records its first arrival time, its arrival spread, and a gain
+per channel. The spread combines the range difference between its ends
+with a random-walk wander of 0.28 sqrt(3 × length) m, so even a side-on
+segment spreads a little. Amplitude is proportional to weight × length /
+range, divided by the spread, so every segment delivers energy in
+proportion to its length. A constant-power pan places each segment by its
+own azimuth, so the roll moves across the stereo field.
+
+Real channels are rough below any segment length. The renderer models
+this fine structure as one random pulse per 3 m of channel. Over one frame
+their sum adds Gaussian noise to each segment's box. Its variance, relative
+to the box, is 0.09 divided by the fine pulses per frame, so a segment with
+a short spread is rougher. This keeps the roll grainy instead of smooth.
+
+Later arrivals travel farther, so the tail is darker than the onset and its
+N-waves are longer. Each voice has three direct range bands, evenly spaced
+in log range. Band 0 uses the strike distance d; band 2 uses d times the
+ratio of the farthest to the nearest segment range. Each segment splits its
+gain linearly between the two bands nearest its range. A fourth band holds
+echo paths longer than the direct span. Each band's excitation passes
+through two filters per channel:
+
+- Pulse: a band-pass at 1/period with Q 0.7 shapes the boxes into N-waves.
+  The period is 6 to 14 ms at 1 km, drawn once per strike, and lengthens
+  with the fourth root of band distance.
+- Air: a fourth-order Butterworth low-pass. Its cutoff is
+  1000 × (1000/r)^0.6 Hz for band distance r, limited to 150 to 6000 Hz.
+
+At 700 m this lowers the spectral centroid of the roll from about 100 Hz
+at onset to about 70 Hz 3 to 8 s later.
+
+Six ground reflectors, placed once per seed, give every strike the same
+terrain. Each sits 300 m to 2.5 km away at uniform azimuth, with
+reflectivity 0.3 to 0.6 and a roughness smear of 0.1 to 0.4 s. A reflector
+returns the whole strike: each segment arrives again, delayed by the extra
+path from the channel's centroid to the reflector to the listener. The echo
+comes from the reflector's azimuth, at reflectivity × direct / echo path,
+spread over the segment's spread plus the smear at the same energy. Echo
+ranges map onto the bands, so echoes are darker than the direct roll.
+The extra path is at most twice the reflector distance, so an echo trails
+by at most 14.6 s, and its gain is at most 0.6. Echo fine-structure noise uses its own random stream. Rendering the
+echoes costs about six times the direct segment work.
+
+A voice retires 4096 frames after its last arrival, so the filters ring
+out to exact silence. A limiter has unity gain below 0.5 of full scale and
+a tanh knee toward 1 above it. Near booms keep about 25 dB of crest factor.
+
+The thunder reverb is a separate six-line network like the shared reverb.
+It runs at a quarter of the sample rate, since thunder is mostly below
+2 kHz, and interpolates its output back up. Line lengths are 557, 719, 887,
+1063, 1297, and 1609 samples at 11025 Hz: 50 to 146 ms, an echo spacing
+like terrain. The loop low-pass has alpha 0.5, about 1.2 kHz.
+`thunder_reverb_decay_s` sets the time to fall 60 dB. The send is the
+dry sum at unity; gain 0.5 puts the wet about 3 dB under the dry roll.
 
 Automatic strikes start one at time zero, then use a Bernoulli trial per
 frame at `thunder_rate_per_min / 60` per second. The comparison uses 32 bits,
 so slow rates keep their resolution. Positions are uniform by area between
 the distance bounds, with uniform azimuth. Two voices can overlap. A strike
 that finds both busy is rejected and counted in `state.dropped_thunder`.
-
-The paper's 0.6 s feedback delay, beach convolution reverb, and output
-compressor are not implemented. The delay line alone would need about 105 KB
-of floats. The shared reverb and master gain cover their roles.
 
 ## Weather controller
 
@@ -520,10 +583,12 @@ Configuration ranges are:
 - Cricket call rate: 0.05 to 10 chirps/s per cricket. Pitch: 2 to 8 kHz.
   Pitch variation and stereo width: 0 to 1. Distance bounds: 0.25 to 100 m,
   ordered; defaults 2 and 15 m.
-- Cicada pitch: 2 to 10 kHz. Pulse rate: 10 to 120 Hz. Texture and stereo
-  width: 0 to 1.
+- Cicada species: dog-day, minminzemi, or higurashi. Pitch: 2 to 10 kHz,
+  default 5 kHz. Click rate scale: 0.5 to 1.5. Chorus and stereo width: 0 to 1. Distance bounds: 0.25 to 100 m, ordered;
+  defaults 5 and 30 m.
 - Thunder gain: 0 to 1, default 0. Strike rate: 0 to 20 per minute, default 2.
-  Distance bounds: 200 m to 15 km, ordered; defaults 1 and 8 km.
+  Distance bounds: 200 m to 15 km, ordered; defaults 1 and 8 km. Reverb
+  gain: 0 to 1, default 0.5. Reverb decay: 0.5 to 10 s, default 3.5 s.
 - Initial, minimum, and maximum rain intensity: 0 to 1; minimum must not
   exceed maximum. Initial intensity must lie within bounds when varying.
 - `vary_rain`: 0 or 1.
@@ -580,8 +645,9 @@ linking the sketch against the C engine. Spatial checks cover rendered
 phase, ear symmetry, head shelf gain, width bypass, distance gain,
 reverb-send independence, rear filtering, and maximum delay bounds.
 Thunder checks cover validation, voice limits, retirement to exact silence,
-low-frequency dominance, distance filtering, panning, automatic rate, and
-rain-stream independence.
+low-frequency dominance, distance filtering, panning, reverb decay, tapered
+endings over 12 strikes, a tail darker than its onset, echoes after the
+direct arrivals, automatic rate, and rain-stream independence.
 A host stub checks linkage only;
 it does not emulate ESP32 peripherals or prove the Arduino SDK build.
 
@@ -625,10 +691,12 @@ an unpublished source.
    [DOI](https://doi.org/10.1109/89.709673).
    Section II.B supplies the spherical-head filter. The other structural
    components from the paper are not implemented.
-7. Eva Fineberg, Jack Walters, and Joshua D. Reiss. *Advances in Thunder Sound
-   Synthesis*. Audio Engineering Society, 2022.
-   [arXiv:2204.08026](https://arxiv.org/abs/2204.08026).
-   Sections 3.1 to 3.4 describe the multi-strike, rumbler, afterimage, and
-   deepener components. Section 6.1 supplies the revised clap Q, clap centre,
-   and deepener high-pass. Its delay, convolution reverb, compressor, and
-   Web Audio panner are not used.
+7. H. S. Ribner and D. Roy. *Acoustics of Thunder: A Quasilinear Model for
+   Tortuous Lightning*. Journal of the Acoustical Society of America 72(6),
+   pp. 1911 to 1925, 1982. [DOI](https://doi.org/10.1121/1.388621).
+   Supplies the segment-sum model: each segment emits an N-wave, and its
+   orientation to the listener sets boom or roll.
+8. R. D. Hill. *Analysis of Irregular Paths of Lightning Channels*. Journal
+   of Geophysical Research 73(6), pp. 1897 to 1906, 1968.
+   [DOI](https://doi.org/10.1029/JB073i006p01897).
+   Supplies the 16 degree mean direction change between channel segments.

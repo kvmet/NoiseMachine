@@ -47,6 +47,7 @@ static void print_usage(const char *program) {
       "  -l minimum     minimum varying intensity, 0..1\n"
       "  -u maximum     maximum varying intensity, 0..1\n"
       "  -m mixed|water|dirt|leaf|concrete|glass|metal|plastic|asphalt|asphalt-roof\n"
+      "  -c dog-day|minminzemi|higurashi   cicada species; default dog-day\n"
       "  -n rate        arrivals/second at full intensity, 0..2000\n"
       "  -t rate        thunder strikes/minute, 0..20; default 2\n"
       "  -b metres      ear spacing / head diameter, 0..0.5; default 0.18\n"
@@ -137,6 +138,15 @@ int main(int argc, char **argv) {
         memset(config.surface_weight, 0, sizeof(config.surface_weight));
         config.surface_weight[surface] = 1.0f;
       }
+    } else if (strcmp(arg, "-c") == 0) {
+      static const char *names[] = {"dog-day", "minminzemi", "higurashi"};
+      unsigned species = 0;
+      while (species < NOISE_CICADA_SPECIES_COUNT && strcmp(value, names[species])) ++species;
+      if (species == NOISE_CICADA_SPECIES_COUNT) {
+        fprintf(stderr, "unknown cicada species: %s\n", value);
+        return 1;
+      }
+      config.cicada_species = (cicada_species)species;
     } else if (strcmp(arg, "-s") == 0) {
       char *end;
       errno = 0;

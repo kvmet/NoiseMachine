@@ -9,8 +9,11 @@ renderer and an Arduino sketch for eventual ESP32 audio output.
   resonance and optional Markov intensity changes.
 - Place drops around the listener with per-ear attenuation, fractional delay,
   a tunable spherical-head HRTF, rear filtering, and shared stereo reverb.
-- Trigger thunder strikes by hand or at a random rate, each with a clap,
-  rumble, afterimage, and low-frequency deepener shaped by distance.
+- Place crickets and cicadas (dog-day, minminzemi, or higurashi) around the
+  listener with the same spatial model and reverb as rain.
+- Trigger thunder strikes by hand or at a random rate. Each strike sums
+  N-waves from a random tortuous channel, filtered by distance, with echoes
+  off fixed terrain and its own reverb.
 
 The [model documentation](docs/index.md) gives the equations, units,
 assumptions, material presets, API contract, and cited references.
@@ -65,7 +68,8 @@ make -C host gui
 Press **Start** for continuous playback. The Mixer, Wind, Insects, Thunder,
 Rain, Water, Weather Mod, and Spatial tabs expose every field in `noise_config`.
 **Strike** on the Thunder tab starts one strike at a random position within
-the distance range.
+the distance range. **Export…** renders the current settings to an AAC `.m4a`
+file of a chosen length.
 Wind has gain, brightness, gust depth, gust rate, and stereo width controls.
 Crickets and cicadas have separate activity, pitch, texture, and stereo controls. Water controls randomized
 impact gain, bubble probability, radius, gain, and decay ranges. Weather Mod
@@ -94,6 +98,7 @@ Run `./host/noise_host -h` for usage.
   15% concrete, and 0.5% each glass and metal. Plastic, asphalt, and roof
   weights default to zero.
 - `-n NUMBER`: arrival rate at intensity one, from 0 to 2000/s. Default: 900.
+- `-c dog-day|minminzemi|higurashi`: cicada species. Default: dog-day.
 - `-t NUMBER`: thunder strikes per minute, from 0 to 20. Default: 2. The first
   strike starts at time zero.
 - `-b METRES`: ear spacing and head diameter, from 0 to 0.5. Default: 0.18.
@@ -138,7 +143,7 @@ bubble radius, and polar position. `noise_trigger_thunder` accepts a strike
 distance and angle. See [the API and limits](docs/index.md#api-and-limits).
 
 The engine owns no heap memory and renders into caller-owned buffers. It
-currently occupies about 57 KB plus output buffers. Keep it in static storage.
+currently occupies about 97 KB plus output buffers. Keep it in static storage.
 Configuration changes require reinitialization; control and render calls must
 share one thread. The API counts stereo frames, so allocate two samples per
 frame.

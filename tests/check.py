@@ -55,7 +55,7 @@ def main():
                      ("-k", "bad"), ("-m", "bad"), ("-v", "-l", "0.9", "-u", "0.2"),
                      ("-v", "-r", "0"), ("-z", "1"), ("-g", "1e30"), ("-n", "2001"),
                      ("-b", "0.51"), ("-a", "-0.1"), ("-f", "nan"), ("-t", "21"),
-                     ("-t", "-1")):
+                     ("-t", "-1"), ("-c", "bad")):
             destination.write_bytes(b"preserve existing file")
             result = subprocess.run((str(host), *args, str(destination)), capture_output=True)
             assert result.returncode != 0, args
