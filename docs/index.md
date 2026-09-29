@@ -25,8 +25,9 @@ formula below requires Pa when the other inputs use SI units.
 ## Ambient layers
 
 `ambient_gain` contains an independent linear gain for white noise, pink
-noise, 50 Hz hum, 60 Hz hum, and wind. Each can be zero or combined with
-others. Every ambient layer except wind is identical in both channels.
+noise, 50 Hz hum, 60 Hz hum, wind, crickets, and cicadas. Each can be zero or
+combined with others. White noise, pink noise, and hum are identical in both
+channels. The nature layers have independent stereo-width controls.
 
 White noise maps the upper 24 bits of a xorshift32 stream to the interval
 [-1, 1). Pink noise uses the existing Paul Kellet seven-state filter, with
@@ -51,6 +52,17 @@ between random amplitude targets. Gust rate sets both the target interval and
 the smoothing rate; gust depth blends between constant and modulated amplitude.
 Wind uses a separate random stream, so enabling it does not change rain or the
 other ambient layers.
+
+Crickets use four call voices. Each call contains three to five gated carrier
+pulses, with randomized pulse timing, pitch, and stereo position. Call rate
+sets the probability of starting a call on each frame. Pitch variation ranges
+from no detuning to plus or minus 30 percent of the configured carrier pitch.
+
+Cicadas use three slightly detuned carrier oscillators. A fourth oscillator
+amplitude-modulates the chorus at the configured pulse rate. Texture blends in
+high-pass noise. Stereo width crossfades between the common carrier and two
+detuned side carriers, and between common and independent noise. Crickets and
+cicadas use separate random streams and do not allocate rain voices.
 
 ## Rain arrivals and size distribution
 
@@ -427,6 +439,10 @@ Configuration ranges are:
 - Ambient, rain, master, and reverb gains: 0 to 1 each.
 - Wind brightness, gust depth, and stereo width: 0 to 1. Gust rate: 0.01 to
   2 Hz.
+- Cricket call rate: 0.05 to 10 Hz. Pitch: 2 to 8 kHz. Pitch variation and
+  stereo width: 0 to 1.
+- Cicada pitch: 2 to 10 kHz. Pulse rate: 10 to 120 Hz. Texture and stereo
+  width: 0 to 1.
 - Initial, minimum, and maximum rain intensity: 0 to 1; minimum must not
   exceed maximum. Initial intensity must lie within bounds when varying.
 - `vary_rain`: 0 or 1.
@@ -442,8 +458,8 @@ Configuration ranges are:
   ordered.
 - Weather modulation amounts: -1 to 1 each.
 
-Five separate random streams drive ambient samples, wind, arrivals, drop
-properties, and weather. Enabling ambient sound cannot change the rain
+Seven separate random streams drive ambient samples, wind, crickets, cicadas,
+arrivals, drop properties, and weather. Enabling ambient sound cannot change the rain
 sequence. Seed zero aliases seed one. Results repeat for the same build,
 configuration, and seed, independent of fill size. Floating-point and
 libm differences can prevent bit-identical output across CPU/toolchain
@@ -458,7 +474,7 @@ and peak voice count.
 ## ESP32 and validation
 
 The sample rate, channel count, and pool size are compile-time constants.
-The engine occupies 56,808 bytes with the tested host ABI, plus 1,024
+The engine occupies 57,072 bytes with the tested host ABI, plus 1,024
 bytes for a 256-frame PCM buffer. Confirm `sizeof(noise_gen)` on the
 target ABI. Keep the generator in static storage, not a small task stack. Buffers are
 caller-owned. Trigonometry, exponentials, and square roots for drops run
@@ -484,6 +500,15 @@ phase, ear symmetry, head shelf gain, width bypass, distance gain,
 reverb-send independence, rear filtering, and maximum delay bounds.
 A host stub checks linkage only;
 it does not emulate ESP32 peripherals or prove the Arduino SDK build.
+
+## Deferred thunder model
+
+Thunder is not implemented. A later implementation will treat it as a
+triggered event instead of a continuous ambient layer. Fineberg, Walters, and
+Reiss [7] divide a real-time signal-based model into a multi-strike clap,
+rumbler, afterimage, and low-frequency deepener. Their evaluation also found
+that deterministic envelopes and excessive regularity reduced perceived
+realism, so each component will need independent timing and spectral variation.
 
 ## References
 
@@ -525,3 +550,8 @@ an unpublished source.
    [DOI](https://doi.org/10.1109/89.709673).
    Section II.B supplies the spherical-head filter. The other structural
    components from the paper are not implemented.
+7. Eva Fineberg, Jack Walters, and Joshua D. Reiss. *Advances in Thunder Sound
+   Synthesis*. Audio Engineering Society, 2022.
+   [arXiv:2204.08026](https://arxiv.org/abs/2204.08026).
+   Sections 3.1 to 3.4 describe the multi-strike, rumbler, afterimage, and
+   deepener components. Thunder is not yet implemented.

@@ -20,6 +20,16 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlWindGustDepth,
   NoiseControlWindGustRate,
   NoiseControlWindWidth,
+  NoiseControlCricketGain,
+  NoiseControlCricketCallRate,
+  NoiseControlCricketPitch,
+  NoiseControlCricketPitchVariation,
+  NoiseControlCricketWidth,
+  NoiseControlCicadaGain,
+  NoiseControlCicadaPitch,
+  NoiseControlCicadaPulseRate,
+  NoiseControlCicadaTexture,
+  NoiseControlCicadaWidth,
   NoiseControlRainGain,
   NoiseControlMaster,
   NoiseControlRainIntensity,
@@ -121,6 +131,16 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   config.wind_gust_depth = [self controlValue:NoiseControlWindGustDepth];
   config.wind_gust_rate_hz = [self controlValue:NoiseControlWindGustRate];
   config.wind_stereo_width = [self controlValue:NoiseControlWindWidth];
+  config.ambient_gain[NOISE_KIND_CRICKETS] = [self controlValue:NoiseControlCricketGain];
+  config.cricket_call_rate_hz = [self controlValue:NoiseControlCricketCallRate];
+  config.cricket_pitch_hz = [self controlValue:NoiseControlCricketPitch];
+  config.cricket_pitch_variation = [self controlValue:NoiseControlCricketPitchVariation];
+  config.cricket_stereo_width = [self controlValue:NoiseControlCricketWidth];
+  config.ambient_gain[NOISE_KIND_CICADAS] = [self controlValue:NoiseControlCicadaGain];
+  config.cicada_pitch_hz = [self controlValue:NoiseControlCicadaPitch];
+  config.cicada_pulse_rate_hz = [self controlValue:NoiseControlCicadaPulseRate];
+  config.cicada_texture = [self controlValue:NoiseControlCicadaTexture];
+  config.cicada_stereo_width = [self controlValue:NoiseControlCicadaWidth];
   config.rain_gain = [self controlValue:NoiseControlRainGain];
   config.master_gain = [self controlValue:NoiseControlMaster];
   config.rain_intensity = [self controlValue:NoiseControlRainIntensity];
@@ -569,6 +589,33 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                  value:defaults.wind_stereo_width minimum:0 maximum:1 logarithmic:NO]
   ]];
 
+  NSView *insects = [self tabViewWithRows:@[
+      [self sectionLabel:@"Crickets"],
+      [self sliderRow:@"Gain" control:NoiseControlCricketGain
+                 value:defaults.ambient_gain[NOISE_KIND_CRICKETS]
+               minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Call rate (Hz)" control:NoiseControlCricketCallRate
+                 value:defaults.cricket_call_rate_hz minimum:0.05 maximum:10 logarithmic:YES],
+      [self sliderRow:@"Pitch (Hz)" control:NoiseControlCricketPitch
+                 value:defaults.cricket_pitch_hz minimum:2000 maximum:8000 logarithmic:YES],
+      [self sliderRow:@"Pitch variation" control:NoiseControlCricketPitchVariation
+                 value:defaults.cricket_pitch_variation minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Stereo width" control:NoiseControlCricketWidth
+                 value:defaults.cricket_stereo_width minimum:0 maximum:1 logarithmic:NO],
+      [self sectionLabel:@"Cicadas"],
+      [self sliderRow:@"Gain" control:NoiseControlCicadaGain
+                 value:defaults.ambient_gain[NOISE_KIND_CICADAS]
+               minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Pitch (Hz)" control:NoiseControlCicadaPitch
+                 value:defaults.cicada_pitch_hz minimum:2000 maximum:10000 logarithmic:YES],
+      [self sliderRow:@"Pulse rate (Hz)" control:NoiseControlCicadaPulseRate
+                 value:defaults.cicada_pulse_rate_hz minimum:10 maximum:120 logarithmic:YES],
+      [self sliderRow:@"Texture" control:NoiseControlCicadaTexture
+                 value:defaults.cicada_texture minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Stereo width" control:NoiseControlCicadaWidth
+                 value:defaults.cicada_stereo_width minimum:0 maximum:1 logarithmic:NO]
+  ]];
+
   _varyButton = [NSButton checkboxWithTitle:@"Vary rain automatically"
                                      target:self action:@selector(varyChanged:)];
   _varyButton.state = defaults.vary_rain ? NSControlStateValueOn : NSControlStateValueOff;
@@ -718,7 +765,8 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   ]];
 
   NSTabView *tabs = [[NSTabView alloc] initWithFrame:NSZeroRect];
-  for (NSArray *item in @[@[@"Mixer", mixer], @[@"Wind", wind], @[@"Rain", rain], @[@"Water", water],
+  for (NSArray *item in @[@[@"Mixer", mixer], @[@"Wind", wind], @[@"Insects", insects],
+                           @[@"Rain", rain], @[@"Water", water],
                            @[@"Weather Mod", weatherMod], @[@"Spatial", spatial]]) {
     NSTabViewItem *tab = [[NSTabViewItem alloc] initWithIdentifier:item[0]];
     tab.label = item[0];

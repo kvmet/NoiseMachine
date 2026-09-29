@@ -14,6 +14,7 @@ extern "C" {
 #define NOISE_REVERB_LINES 6u
 #define NOISE_REVERB_SAMPLES 7304u
 #define NOISE_DIRECT_SAMPLES 128u
+#define NOISE_CRICKET_VOICES 4u
 
 typedef enum noise_kind {
   NOISE_KIND_WHITE = 0,
@@ -21,6 +22,8 @@ typedef enum noise_kind {
   HUM_50HZ,
   HUM_60HZ,
   NOISE_KIND_WIND,
+  NOISE_KIND_CRICKETS,
+  NOISE_KIND_CICADAS,
   NOISE_KIND_COUNT
 } noise_kind;
 
@@ -83,6 +86,14 @@ typedef struct noise_config {
   float wind_gust_depth;
   float wind_gust_rate_hz;
   float wind_stereo_width;
+  float cricket_call_rate_hz;
+  float cricket_pitch_hz;
+  float cricket_pitch_variation;
+  float cricket_stereo_width;
+  float cicada_pitch_hz;
+  float cicada_pulse_rate_hz;
+  float cicada_texture;
+  float cicada_stereo_width;
   float master_gain;
   float rain_gain;
   float rain_intensity; /* Initial intensity, 0..1; zero means no arrivals. */
@@ -121,6 +132,21 @@ typedef struct noise_mode {
   uint32_t delay;
 } noise_mode;
 
+typedef struct noise_oscillator {
+  float previous;
+  float current;
+  float coefficient;
+} noise_oscillator;
+
+typedef struct noise_cricket_voice {
+  noise_oscillator oscillator;
+  float channel_gain[2];
+  uint32_t remaining;
+  uint32_t total_samples;
+  uint32_t pulse_samples;
+  uint32_t sounding_samples;
+} noise_cricket_voice;
+
 typedef struct noise_drop_voice {
   noise_mode mode[3];
   float ear_gain[2];
@@ -155,6 +181,8 @@ typedef struct noise_gen {
   noise_state state;
   uint32_t ambient_rng;
   uint32_t wind_rng;
+  uint32_t cricket_rng;
+  uint32_t cicada_rng;
   uint32_t arrival_rng;
   uint32_t drop_rng;
   uint32_t weather_rng;
@@ -168,6 +196,12 @@ typedef struct noise_gen {
   float wind_brightness_cache;
   float wind_gust_rate_cache;
   uint32_t wind_gust_samples;
+  noise_cricket_voice crickets[NOISE_CRICKET_VOICES];
+  unsigned cricket_started;
+  noise_oscillator cicada_oscillator[4];
+  float cicada_noise_lowpass[2];
+  float cicada_pitch_cache;
+  float cicada_pulse_rate_cache;
   uint32_t hum_sample;
   float hum_table[882];
   noise_drop_voice voices[NOISE_MAX_DROPLETS];

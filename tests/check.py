@@ -28,7 +28,8 @@ def main():
         run(cc, *flags, str(ROOT / "host/main.c"), str(CORE / "noise_core.c"),
             "-lm", "-o", str(host))
         destination = work / "audio.wav"
-        for kind in ("white", "pink", "hum50", "hum60", "wind", "rain"):
+        for kind in ("white", "pink", "hum50", "hum60", "wind", "crickets", "cicadas",
+                     "rain"):
             run(str(host), "-k", kind, "-d", "0.125", str(destination), stdout=subprocess.DEVNULL)
             with wave.open(str(destination)) as wav:
                 assert wav.getnchannels() == 2

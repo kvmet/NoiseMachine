@@ -69,6 +69,18 @@ static void test_validation(void) {
   c = silent_config();
   c.wind_stereo_width = 1.01f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.cricket_call_rate_hz = 0.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.cricket_pitch_hz = 8001.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.cicada_pulse_rate_hz = 121.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.cicada_texture = NAN;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   droplet drop = water_drop();
   drop.bubble_radius_m = 0.0001f;
   assert(noise_trigger_drop(&a, &drop) == NOISE_INVALID_DROP);
@@ -96,6 +108,8 @@ static void test_silence_and_chunks(void) {
   c.ambient_gain[NOISE_KIND_PINK] = 0.2f;
   c.ambient_gain[HUM_60HZ] = 0.1f;
   c.ambient_gain[NOISE_KIND_WIND] = 0.1f;
+  c.ambient_gain[NOISE_KIND_CRICKETS] = 0.05f;
+  c.ambient_gain[NOISE_KIND_CICADAS] = 0.05f;
   assert(noise_init(&a, &c, 0) == NOISE_OK);
   assert(noise_init(&b, &c, 1) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
@@ -216,6 +230,54 @@ static void test_wind(void) {
   }
   assert(stereo);
   assert(a.wind_gust != 0.5f);
+  assert(a.state.clipped_samples == 0);
+}
+
+static void test_insects(void) {
+  noise_config c = silent_config();
+  c.ambient_gain[NOISE_KIND_CRICKETS] = 0.7f;
+  c.cricket_call_rate_hz = 0.05f;
+  c.cricket_pitch_variation = 0.0f;
+  c.cricket_stereo_width = 0.0f;
+  assert(noise_init(&a, &c, 29) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  unsigned cricket_samples = 0;
+  for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) {
+    cricket_samples += audio[2 * n] != 0;
+    assert(audio[2 * n] == audio[2 * n + 1]);
+  }
+  assert(cricket_samples > 1000 && cricket_samples < 15000);
+
+  c.cricket_stereo_width = 1.0f;
+  assert(noise_init(&a, &c, 29) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  unsigned cricket_stereo = 0;
+  for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) {
+    cricket_stereo += audio[2 * n] != audio[2 * n + 1];
+  }
+  assert(cricket_stereo > 1000);
+
+  c = silent_config();
+  c.ambient_gain[NOISE_KIND_CICADAS] = 0.7f;
+  c.cicada_texture = 0.0f;
+  c.cicada_stereo_width = 0.0f;
+  assert(noise_init(&a, &c, 29) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) {
+    assert(audio[2 * n] == audio[2 * n + 1]);
+  }
+  assert(spectral_amplitude(c.cicada_pitch_hz) >
+         20.0 * spectral_amplitude(c.cicada_pitch_hz * 0.5));
+
+  c.cicada_texture = 0.5f;
+  c.cicada_stereo_width = 1.0f;
+  assert(noise_init(&a, &c, 29) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  unsigned cicada_stereo = 0;
+  for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) {
+    cicada_stereo += audio[2 * n] != audio[2 * n + 1];
+  }
+  assert(cicada_stereo > NOISE_SAMPLE_RATE_HZ / 2);
   assert(a.state.clipped_samples == 0);
 }
 
@@ -710,6 +772,7 @@ int main(void) {
   test_hum();
   test_noise_spectra();
   test_wind();
+  test_insects();
   test_bubble_physics();
   test_water_controls();
   test_automatic_water_bubbles();

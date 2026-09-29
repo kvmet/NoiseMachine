@@ -70,6 +70,14 @@ static int valid_config(const noise_config *c) {
       !in_range(c->wind_gust_depth, 0.0f, 1.0f) ||
       !in_range(c->wind_gust_rate_hz, 0.01f, 2.0f) ||
       !in_range(c->wind_stereo_width, 0.0f, 1.0f) ||
+      !in_range(c->cricket_call_rate_hz, 0.05f, 10.0f) ||
+      !in_range(c->cricket_pitch_hz, 2000.0f, 8000.0f) ||
+      !in_range(c->cricket_pitch_variation, 0.0f, 1.0f) ||
+      !in_range(c->cricket_stereo_width, 0.0f, 1.0f) ||
+      !in_range(c->cicada_pitch_hz, 2000.0f, 10000.0f) ||
+      !in_range(c->cicada_pulse_rate_hz, 10.0f, 120.0f) ||
+      !in_range(c->cicada_texture, 0.0f, 1.0f) ||
+      !in_range(c->cicada_stereo_width, 0.0f, 1.0f) ||
       !in_range(c->water_impact_gain_min, 0.0f, 2.0f) ||
       !in_range(c->water_impact_gain_max, c->water_impact_gain_min, 2.0f) ||
       !in_range(c->water_bubble_probability, 0.0f, 1.0f) ||
@@ -106,6 +114,14 @@ void noise_config_default(noise_config *c) {
   c->wind_gust_depth = 0.6f;
   c->wind_gust_rate_hz = 0.12f;
   c->wind_stereo_width = 0.5f;
+  c->cricket_call_rate_hz = 1.2f;
+  c->cricket_pitch_hz = 4500.0f;
+  c->cricket_pitch_variation = 0.35f;
+  c->cricket_stereo_width = 0.8f;
+  c->cicada_pitch_hz = 6500.0f;
+  c->cicada_pulse_rate_hz = 45.0f;
+  c->cicada_texture = 0.35f;
+  c->cicada_stereo_width = 0.75f;
   c->master_gain = 0.8f;
   c->rain_gain = 0.5f;
   c->min_rain_intensity = 0.15f;
@@ -147,6 +163,8 @@ noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t see
   seed = seed ? seed : 1u;
   gen->ambient_rng = stream_seed(seed, 0x9e3779b9u);
   gen->wind_rng = stream_seed(seed, 0x1715609du);
+  gen->cricket_rng = stream_seed(seed, 0xb54cda58u);
+  gen->cicada_rng = stream_seed(seed, 0x94d049bbu);
   gen->arrival_rng = stream_seed(seed, 0x3c6ef372u);
   gen->drop_rng = stream_seed(seed, 0xdaa66d2bu);
   gen->weather_rng = stream_seed(seed, 0x78dde6e4u);
@@ -154,6 +172,8 @@ noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t see
   gen->wind_gust_target = 0.5f;
   gen->wind_brightness_cache = -1.0f;
   gen->wind_gust_rate_cache = -1.0f;
+  gen->cicada_pitch_cache = -1.0f;
+  gen->cicada_pulse_rate_cache = -1.0f;
   gen->state.rain_intensity = copy.rain_intensity;
   gen->state.rain_target = copy.rain_intensity;
   float span = copy.max_rain_intensity - copy.min_rain_intensity;
@@ -205,6 +225,21 @@ static float mode_next(noise_mode *mode) {
   mode->previous = mode->current;
   mode->current = next;
   mode->remaining -= 1;
+  return value;
+}
+
+static void oscillator_init(noise_oscillator *oscillator, float frequency) {
+  float phase = 2.0f * NOISE_PI * frequency / NOISE_SAMPLE_RATE_HZ;
+  oscillator->previous = -sinf(phase);
+  oscillator->current = 0.0f;
+  oscillator->coefficient = 2.0f * cosf(phase);
+}
+
+static float oscillator_next(noise_oscillator *oscillator) {
+  float value = oscillator->current;
+  float next = oscillator->coefficient * oscillator->current - oscillator->previous;
+  oscillator->previous = oscillator->current;
+  oscillator->current = next;
   return value;
 }
 
@@ -447,6 +482,97 @@ static void weather_next(noise_gen *gen) {
   gen->state.rain_intensity = next;
 }
 
+static void start_cricket(noise_gen *gen, noise_cricket_voice *voice) {
+  unsigned pulses = 3u + random_u32(&gen->cricket_rng) % 3u;
+  voice->pulse_samples = (uint32_t)(NOISE_SAMPLE_RATE_HZ *
+      random_between(&gen->cricket_rng, 0.026f, 0.036f));
+  voice->sounding_samples = (uint32_t)(voice->pulse_samples *
+      random_between(&gen->cricket_rng, 0.55f, 0.70f));
+  voice->total_samples = pulses * voice->pulse_samples;
+  voice->remaining = voice->total_samples;
+  float detune = gen->config.cricket_pitch_variation *
+                 random_between(&gen->cricket_rng, -0.3f, 0.3f);
+  oscillator_init(&voice->oscillator, gen->config.cricket_pitch_hz * (1.0f + detune));
+  float pan = gen->config.cricket_stereo_width *
+              random_between(&gen->cricket_rng, -1.0f, 1.0f);
+  voice->channel_gain[0] = 0.7f * (1.0f - pan);
+  voice->channel_gain[1] = 0.7f * (1.0f + pan);
+}
+
+static void insects_next(noise_gen *gen, float *left, float *right) {
+  const float *gain = gen->config.ambient_gain;
+  if (gain[NOISE_KIND_CRICKETS] > 0.0f) {
+    int trigger = !gen->cricket_started;
+    gen->cricket_started = 1;
+    if (!trigger) {
+      trigger = random_unit(&gen->cricket_rng) <
+                gen->config.cricket_call_rate_hz / NOISE_SAMPLE_RATE_HZ;
+    }
+    if (trigger) {
+      for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) {
+        if (gen->crickets[i].remaining == 0) {
+          start_cricket(gen, &gen->crickets[i]);
+          break;
+        }
+      }
+    }
+    for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) {
+      noise_cricket_voice *voice = &gen->crickets[i];
+      if (voice->remaining == 0) continue;
+      uint32_t position = voice->total_samples - voice->remaining;
+      uint32_t within_pulse = position % voice->pulse_samples;
+      float carrier = oscillator_next(&voice->oscillator);
+      if (within_pulse < voice->sounding_samples) {
+        uint32_t attack = voice->sounding_samples / 4u;
+        float envelope = within_pulse < attack ?
+            (float)within_pulse / (float)attack :
+            (float)(voice->sounding_samples - within_pulse) /
+            (float)(voice->sounding_samples - attack);
+        float tone = carrier - 0.22f * carrier * carrier * carrier;
+        float sample = 0.35f * gain[NOISE_KIND_CRICKETS] * envelope * tone;
+        *left += sample * voice->channel_gain[0];
+        *right += sample * voice->channel_gain[1];
+      }
+      --voice->remaining;
+    }
+  }
+
+  if (gain[NOISE_KIND_CICADAS] <= 0.0f) return;
+  if (gen->config.cicada_pitch_hz != gen->cicada_pitch_cache) {
+    float pitch = gen->config.cicada_pitch_hz;
+    gen->cicada_pitch_cache = pitch;
+    oscillator_init(&gen->cicada_oscillator[0], pitch);
+    oscillator_init(&gen->cicada_oscillator[1], pitch * 0.983f);
+    oscillator_init(&gen->cicada_oscillator[2], pitch * 1.017f);
+  }
+  if (gen->config.cicada_pulse_rate_hz != gen->cicada_pulse_rate_cache) {
+    gen->cicada_pulse_rate_cache = gen->config.cicada_pulse_rate_hz;
+    oscillator_init(&gen->cicada_oscillator[3], gen->config.cicada_pulse_rate_hz);
+  }
+  float common_tone = oscillator_next(&gen->cicada_oscillator[0]);
+  float side_tone[2] = {
+    oscillator_next(&gen->cicada_oscillator[1]),
+    oscillator_next(&gen->cicada_oscillator[2])
+  };
+  float pulse = fmaxf(0.0f, oscillator_next(&gen->cicada_oscillator[3]));
+  float envelope = 0.2f + 0.8f * pulse * pulse;
+  float width = gen->config.cicada_stereo_width;
+  float texture = gen->config.cicada_texture;
+  float common_noise = 2.0f * random_unit(&gen->cicada_rng) - 1.0f;
+  float *output[2] = {left, right};
+  for (unsigned channel = 0; channel < 2; ++channel) {
+    float side_noise = 2.0f * random_unit(&gen->cicada_rng) - 1.0f;
+    float noise = (1.0f - width) * common_noise + width * side_noise;
+    gen->cicada_noise_lowpass[channel] += 0.247949f *
+        (noise - gen->cicada_noise_lowpass[channel]);
+    float bright_noise = noise - gen->cicada_noise_lowpass[channel];
+    float tone = (1.0f - width) * common_tone + width * side_tone[channel];
+    float sample = (1.0f - 0.45f * texture) * tone +
+                   0.30f * texture * bright_noise;
+    *output[channel] += 0.22f * gain[NOISE_KIND_CICADAS] * envelope * sample;
+  }
+}
+
 static void ambient_next(noise_gen *gen, float *left, float *right) {
   const float *gain = gen->config.ambient_gain;
   float sample = 0.0f;
@@ -479,40 +605,42 @@ static void ambient_next(noise_gen *gen, float *left, float *right) {
   *left += sample;
   *right += sample;
 
-  if (gain[NOISE_KIND_WIND] <= 0.0f) return;
-  float rate = gen->config.wind_gust_rate_hz;
-  if (rate != gen->wind_gust_rate_cache) {
-    gen->wind_gust_rate_cache = rate;
-    gen->wind_gust_alpha = -expm1f(-2.0f * NOISE_PI * rate / NOISE_SAMPLE_RATE_HZ);
+  if (gain[NOISE_KIND_WIND] > 0.0f) {
+    float rate = gen->config.wind_gust_rate_hz;
+    if (rate != gen->wind_gust_rate_cache) {
+      gen->wind_gust_rate_cache = rate;
+      gen->wind_gust_alpha = -expm1f(-2.0f * NOISE_PI * rate / NOISE_SAMPLE_RATE_HZ);
+    }
+    float brightness = gen->config.wind_brightness;
+    if (brightness != gen->wind_brightness_cache) {
+      gen->wind_brightness_cache = brightness;
+      float cutoff = 400.0f * powf(20.0f, brightness);
+      gen->wind_air_alpha = -expm1f(-2.0f * NOISE_PI * cutoff / NOISE_SAMPLE_RATE_HZ);
+    }
+    if (gen->wind_gust_samples == 0) {
+      gen->wind_gust_target = random_unit(&gen->wind_rng);
+      gen->wind_gust_samples = (uint32_t)(NOISE_SAMPLE_RATE_HZ / rate);
+    }
+    --gen->wind_gust_samples;
+    gen->wind_gust += gen->wind_gust_alpha * (gen->wind_gust_target - gen->wind_gust);
+    float depth = gen->config.wind_gust_depth;
+    float envelope = 1.0f - depth + depth * (0.35f + 1.3f * gen->wind_gust);
+    const float rumble_alpha = 0.0169533f;
+    float common = 2.0f * random_unit(&gen->wind_rng) - 1.0f;
+    float width = gen->config.wind_stereo_width;
+    float *output[2] = {left, right};
+    for (unsigned channel = 0; channel < 2; ++channel) {
+      float side = 2.0f * random_unit(&gen->wind_rng) - 1.0f;
+      float input = (1.0f - width) * common + width * side;
+      gen->wind_filter[channel] += gen->wind_air_alpha *
+                                   (input - gen->wind_filter[channel]);
+      gen->wind_rumble[channel] += rumble_alpha * (input - gen->wind_rumble[channel]);
+      *output[channel] += gain[NOISE_KIND_WIND] * envelope *
+                          (0.55f * gen->wind_filter[channel] +
+                           0.30f * gen->wind_rumble[channel]);
+    }
   }
-  float brightness = gen->config.wind_brightness;
-  if (brightness != gen->wind_brightness_cache) {
-    gen->wind_brightness_cache = brightness;
-    float cutoff = 400.0f * powf(20.0f, brightness);
-    gen->wind_air_alpha = -expm1f(-2.0f * NOISE_PI * cutoff / NOISE_SAMPLE_RATE_HZ);
-  }
-  if (gen->wind_gust_samples == 0) {
-    gen->wind_gust_target = random_unit(&gen->wind_rng);
-    gen->wind_gust_samples = (uint32_t)(NOISE_SAMPLE_RATE_HZ / rate);
-  }
-  --gen->wind_gust_samples;
-  gen->wind_gust += gen->wind_gust_alpha * (gen->wind_gust_target - gen->wind_gust);
-  float depth = gen->config.wind_gust_depth;
-  float envelope = 1.0f - depth + depth * (0.35f + 1.3f * gen->wind_gust);
-  const float rumble_alpha = 0.0169533f;
-  float common = 2.0f * random_unit(&gen->wind_rng) - 1.0f;
-  float width = gen->config.wind_stereo_width;
-  float *output[2] = {left, right};
-  for (unsigned channel = 0; channel < 2; ++channel) {
-    float side = 2.0f * random_unit(&gen->wind_rng) - 1.0f;
-    float input = (1.0f - width) * common + width * side;
-    gen->wind_filter[channel] += gen->wind_air_alpha *
-                                 (input - gen->wind_filter[channel]);
-    gen->wind_rumble[channel] += rumble_alpha * (input - gen->wind_rumble[channel]);
-    *output[channel] += gain[NOISE_KIND_WIND] * envelope *
-                        (0.55f * gen->wind_filter[channel] +
-                         0.30f * gen->wind_rumble[channel]);
-  }
+  insects_next(gen, left, right);
 }
 
 static void reverb_next(noise_gen *gen, float send, float gain,

@@ -41,7 +41,7 @@ static int write_wav_header(FILE *file, uint32_t frames) {
 static void print_usage(const char *program) {
   fprintf(stderr,
       "usage: %s [options] OUTPUT.wav\n"
-      "  -k white|pink|hum50|hum60|wind|rain   repeat to mix layers\n"
+      "  -k white|pink|hum50|hum60|wind|crickets|cicadas|rain   repeat to mix layers\n"
       "  -r intensity   fixed rain intensity, 0..1\n"
       "  -v             vary rain with the Markov controller\n"
       "  -l minimum     minimum varying intensity, 0..1\n"
@@ -104,7 +104,9 @@ int main(int argc, char **argv) {
       if (strcmp(value, "rain") == 0) {
         rain = 1;
       } else {
-        static const char *names[] = {"white", "pink", "hum50", "hum60", "wind"};
+        static const char *names[] = {
+          "white", "pink", "hum50", "hum60", "wind", "crickets", "cicadas"
+        };
         unsigned kind = 0;
         while (kind < NOISE_KIND_COUNT && strcmp(value, names[kind])) ++kind;
         if (kind == NOISE_KIND_COUNT) {
