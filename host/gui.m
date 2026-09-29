@@ -34,6 +34,8 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlThunderRate,
   NoiseControlThunderMinDistance,
   NoiseControlThunderMaxDistance,
+  NoiseControlThunderReverbGain,
+  NoiseControlThunderReverbDecay,
   NoiseControlRainGain,
   NoiseControlMaster,
   NoiseControlRainIntensity,
@@ -195,6 +197,8 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   config.thunder_rate_per_min = [self controlValue:NoiseControlThunderRate];
   config.thunder_min_distance_m = [self controlValue:NoiseControlThunderMinDistance];
   config.thunder_max_distance_m = [self controlValue:NoiseControlThunderMaxDistance];
+  config.thunder_reverb_gain = [self controlValue:NoiseControlThunderReverbGain];
+  config.thunder_reverb_decay_s = [self controlValue:NoiseControlThunderReverbDecay];
   config.rain_gain = [self controlValue:NoiseControlRainGain];
   config.master_gain = [self controlValue:NoiseControlMaster];
   config.rain_intensity = [self controlValue:NoiseControlRainIntensity];
@@ -718,6 +722,10 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
       [self sliderRow:@"Maximum distance (m)" control:NoiseControlThunderMaxDistance
                  value:defaults.thunder_max_distance_m
                minimum:200 maximum:15000 logarithmic:YES],
+      [self sliderRow:@"Reverb gain" control:NoiseControlThunderReverbGain
+                 value:defaults.thunder_reverb_gain minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Reverb decay (s)" control:NoiseControlThunderReverbDecay
+                 value:defaults.thunder_reverb_decay_s minimum:0.5 maximum:10 logarithmic:YES],
       strikeButton
   ]];
 

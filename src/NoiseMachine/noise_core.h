@@ -17,7 +17,7 @@ extern "C" {
 #define NOISE_CRICKET_VOICES 4u
 #define NOISE_THUNDER_VOICES 2u
 #define NOISE_THUNDER_SEGMENTS 256u
-#define NOISE_THUNDER_PULSES 128u
+#define NOISE_THUNDER_REVERB_SAMPLES 6132u
 
 typedef enum noise_kind {
   NOISE_KIND_WHITE = 0,
@@ -106,6 +106,8 @@ typedef struct noise_config {
   float thunder_rate_per_min; /* Automatic strikes; zero allows only manual strikes. */
   float thunder_min_distance_m;
   float thunder_max_distance_m;
+  float thunder_reverb_gain;
+  float thunder_reverb_decay_s; /* Time to fall 60 dB. */
   float master_gain;
   float rain_gain;
   float rain_intensity; /* Initial intensity, 0..1; zero means no arrivals. */
@@ -163,13 +165,13 @@ typedef struct noise_thunder_segment {
   float start; /* Frames after the strike's first arrival. */
   float width; /* Arrival spread between the segment's ends, frames. */
   float gain[2]; /* Per channel, divided by width. */
-  float pulse_rate; /* Fine-tortuosity pulses per frame within the width. */
+  float pulse_rate; /* Fine-tortuosity impulses per frame within the width. */
 } noise_thunder_segment;
 
-typedef struct noise_thunder_pulse {
-  uint32_t start; /* Voice frame. */
-  float gain[2];
-} noise_thunder_pulse;
+typedef struct noise_biquad {
+  float b0, b1, b2, a1, a2;
+  float state[2];
+} noise_biquad;
 
 typedef struct noise_thunder_voice {
   noise_thunder_segment segment[NOISE_THUNDER_SEGMENTS]; /* Sorted by start. */
@@ -178,12 +180,8 @@ typedef struct noise_thunder_voice {
   unsigned next; /* Segments from this index have not arrived. */
   uint32_t elapsed;
   uint32_t length; /* Zero marks a free voice. */
-  float period; /* N-wave duration, frames. */
-  noise_thunder_pulse pulse[NOISE_THUNDER_PULSES]; /* FIFO; equal periods expire in order. */
-  unsigned pulse_head;
-  unsigned pulses;
-  float air_alpha;
-  float air[2][2];
+  noise_biquad pulse[2]; /* Band-pass at 1/period turns each impulse into an N-wave. */
+  noise_biquad air[2][2]; /* Fourth-order Butterworth low-pass per channel. */
 } noise_thunder_voice;
 
 typedef struct noise_drop_voice {
@@ -246,6 +244,14 @@ typedef struct noise_gen {
   float cicada_pulse_rate_cache;
   noise_thunder_voice thunder[NOISE_THUNDER_VOICES];
   unsigned thunder_started;
+  float thunder_reverb[NOISE_THUNDER_REVERB_SAMPLES];
+  unsigned thunder_reverb_position[NOISE_REVERB_LINES];
+  float thunder_reverb_damping[NOISE_REVERB_LINES];
+  float thunder_reverb_feedback[NOISE_REVERB_LINES];
+  float thunder_reverb_decay_cache;
+  float thunder_reverb_input;
+  unsigned thunder_reverb_phase;
+  float thunder_reverb_output[2][2]; /* Previous and current quarter-rate outputs. */
   uint32_t hum_sample;
   float hum_table[882];
   noise_drop_voice voices[NOISE_MAX_DROPLETS];

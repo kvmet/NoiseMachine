@@ -16,6 +16,7 @@ static noise_config silent_config(void) {
   noise_config_default(&c);
   memset(c.ambient_gain, 0, sizeof(c.ambient_gain));
   c.reverb_gain = 0.0f;
+  c.thunder_reverb_gain = 0.0f;
   c.master_gain = 1.0f;
   return c;
 }
@@ -296,6 +297,12 @@ static void test_thunder(void) {
   c = silent_config();
   c.thunder_max_distance_m = 900.0f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.thunder_reverb_decay_s = 0.4f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.thunder_reverb_gain = NAN;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
 
   c = silent_config();
   c.thunder_gain = 1.0f;
@@ -345,43 +352,61 @@ static void test_thunder(void) {
   for (unsigned n = 0; n < 2 * NOISE_SAMPLE_RATE_HZ; ++n) energy[n % 2] += (double)audio[n] * audio[n];
   assert(energy[0] > 4.0 * energy[1]);
 
-  /* One hand-placed segment, air filter bypassed, renders the smeared N-wave exactly:
-     side-on it is the N-wave itself; end-on it splits into opposite parabolas. */
-  const float widths[2] = {0.25f, 300.0f};
-  double peak[2] = {0.0, 0.0};
-  unsigned last_nonzero[2] = {0, 0};
-  for (unsigned w = 0; w < 2; ++w) {
+  /* One hand-placed segment of fixed area. End-on, its box edges give a positive then
+     a negative pulse and a lower peak than side-on. A fractional start keeps the area. */
+  const float widths[3] = {0.25f, 0.25f, 600.0f};
+  const float starts[3] = {10.0f, 10.5f, 10.0f};
+  double peak[3] = {0.0, 0.0, 0.0}, total_energy[3] = {0.0, 0.0, 0.0};
+  for (unsigned w = 0; w < 3; ++w) {
     assert(noise_init(&a, &c, 66) == NOISE_OK);
+    strike.position.distance_m = 200.0f;
     assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
     noise_thunder_voice *v = &a.thunder[0];
-    const double period = 441.0, gain = 0.5 / widths[w];
     v->segments = 1;
-    v->segment[0].start = 0.0f;
+    v->segment[0].start = starts[w];
     v->segment[0].width = widths[w];
-    v->segment[0].gain[0] = v->segment[0].gain[1] = (float)gain;
+    v->segment[0].gain[0] = v->segment[0].gain[1] = 0.05f / widths[w];
     v->segment[0].pulse_rate = 0.0f;
-    v->period = (float)period;
-    v->air_alpha = 1.0f;
-    v->length = 1000;
-    noise_fill(&a, audio, 1000);
-    for (unsigned n = 0; n < 1000; ++n) {
-      double x = n, integral[2];
-      for (unsigned k = 0; k < 2; ++k) {
-        double u = x - (k ? widths[w] : 0.0);
-        integral[k] = u <= 0.0 || u >= period ? 0.0 : u - u * u / period;
-      }
-      double expected = 32767.0 * gain * (integral[0] - integral[1]);
-      assert(fabs(audio[2 * n] - expected) <= 1.0 + 1e-3 * fabs(expected));
-      if (fabs(expected) > peak[w]) peak[w] = fabs(expected);
-      if (audio[2 * n] != 0) last_nonzero[w] = n;
+    v->length = 4000;
+    noise_fill(&a, audio, 4000);
+    int positive = 0, negative = 0;
+    for (unsigned n = 0; n < 4000; ++n) {
+      double x = audio[2 * n];
+      if (fabs(x) > peak[w]) peak[w] = fabs(x);
+      total_energy[w] += x * x;
+      if (n < 300 && x > positive) positive = (int)x;
+      if (n >= 600 && n < 900 && x < negative) negative = (int)x;
     }
-    if (w == 1) {
-      assert(audio[2 * 220] > 0);
-      assert(audio[2 * 520] < 0);
+    if (w == 2) {
+      assert(positive > 0.5 * peak[2]);
+      assert(negative < -0.5 * peak[2]);
     }
   }
-  assert(peak[1] < 0.5 * peak[0]);
-  assert(last_nonzero[1] > last_nonzero[0] + 250);
+  assert(peak[2] < 0.5 * peak[0]);
+  assert(fabs(peak[1] / peak[0] - 1.0) < 0.05);
+  assert(fabs(total_energy[1] / total_energy[0] - 1.0) < 0.05);
+
+  /* The thunder reverb extends the roll after the voice ends, then decays at its
+     configured rate: 60 dB per decay time, so about 17 dB per second at 3.5 s. */
+  c.thunder_reverb_gain = 1.0f;
+  c.thunder_reverb_decay_s = 3.5f;
+  strike.position.distance_m = 1000.0f;
+  strike.position.angle_rad = 0.0f;
+  assert(noise_init(&a, &c, 67) == NOISE_OK);
+  assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
+  while (a.thunder[0].length) noise_fill(&a, audio, 1);
+  double tail[3];
+  for (unsigned second = 0; second < 3; ++second) {
+    noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+    tail[second] = 0.0;
+    for (unsigned i = 0; i < 2 * NOISE_SAMPLE_RATE_HZ; ++i) {
+      tail[second] += (double)audio[i] * audio[i];
+    }
+  }
+  assert(tail[0] > 0.0);
+  double decay_db = 10.0 * log10(tail[1] / tail[2]);
+  assert(decay_db > 12.0 && decay_db < 22.0);
+  c.thunder_reverb_gain = 0.0f;
 
   /* Automatic strikes: one at start, then about rate/min, including capacity losses. */
   c.thunder_rate_per_min = 20.0f;

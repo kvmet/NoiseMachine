@@ -18,6 +18,14 @@ static const unsigned reverb_length[NOISE_REVERB_LINES] = {
 static const unsigned reverb_offset[NOISE_REVERB_LINES] = {
   0, 739, 1692, 2843, 4170, 5641
 };
+/* Thunder reverb lines at quarter rate: 50 to 146 ms, echo spacing like terrain. */
+#define THUNDER_REVERB_DECIMATION 4u
+static const unsigned thunder_reverb_length[NOISE_REVERB_LINES] = {
+  557, 719, 887, 1063, 1297, 1609
+};
+static const unsigned thunder_reverb_offset[NOISE_REVERB_LINES] = {
+  0, 557, 1276, 2163, 3226, 4523
+};
 
 static uint32_t random_u32(uint32_t *state) {
   uint32_t x = *state;
@@ -86,6 +94,8 @@ static int valid_config(const noise_config *c) {
       !in_range(c->thunder_rate_per_min, 0.0f, 20.0f) ||
       !in_range(c->thunder_min_distance_m, 200.0f, 15000.0f) ||
       !in_range(c->thunder_max_distance_m, c->thunder_min_distance_m, 15000.0f) ||
+      !in_range(c->thunder_reverb_gain, 0.0f, 1.0f) ||
+      !in_range(c->thunder_reverb_decay_s, 0.5f, 10.0f) ||
       !in_range(c->water_impact_gain_min, 0.0f, 2.0f) ||
       !in_range(c->water_impact_gain_max, c->water_impact_gain_min, 2.0f) ||
       !in_range(c->water_bubble_probability, 0.0f, 1.0f) ||
@@ -133,6 +143,8 @@ void noise_config_default(noise_config *c) {
   c->thunder_rate_per_min = 2.0f;
   c->thunder_min_distance_m = 1000.0f;
   c->thunder_max_distance_m = 8000.0f;
+  c->thunder_reverb_gain = 0.5f;
+  c->thunder_reverb_decay_s = 3.5f;
   c->master_gain = 0.8f;
   c->rain_gain = 0.5f;
   c->min_rain_intensity = 0.15f;
@@ -186,6 +198,7 @@ noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t see
   gen->wind_gust_rate_cache = -1.0f;
   gen->cicada_pitch_cache = -1.0f;
   gen->cicada_pulse_rate_cache = -1.0f;
+  gen->thunder_reverb_decay_cache = -1.0f;
   gen->state.rain_intensity = copy.rain_intensity;
   gen->state.rain_target = copy.rain_intensity;
   float span = copy.max_rain_intensity - copy.min_rain_intensity;
@@ -661,6 +674,32 @@ typedef struct thunder_build {
   float step_m; /* Mean segment length. */
 } thunder_build;
 
+/* RBJ cookbook coefficients; the band-pass has 0 dB peak gain. */
+static void biquad_tune(noise_biquad *filter, int bandpass, float frequency, float q) {
+  float phase = 2.0f * NOISE_PI * frequency / NOISE_SAMPLE_RATE_HZ;
+  float cosine = cosf(phase);
+  float alpha = sinf(phase) / (2.0f * q);
+  float norm = 1.0f / (1.0f + alpha);
+  if (bandpass) {
+    filter->b0 = alpha * norm;
+    filter->b1 = 0.0f;
+    filter->b2 = -alpha * norm;
+  } else {
+    filter->b0 = 0.5f * (1.0f - cosine) * norm;
+    filter->b1 = (1.0f - cosine) * norm;
+    filter->b2 = filter->b0;
+  }
+  filter->a1 = -2.0f * cosine * norm;
+  filter->a2 = (1.0f - alpha) * norm;
+}
+
+static float biquad_next(noise_biquad *filter, float input) {
+  float output = filter->b0 * input + filter->state[0];
+  filter->state[0] = filter->b1 * input - filter->a1 * output + filter->state[1];
+  filter->state[1] = filter->b2 * input - filter->a2 * output;
+  return output;
+}
+
 /* Irwin-Hall sum of four uniforms, scaled to unit variance. */
 static float random_gaussian(uint32_t *rng) {
   float sum = random_unit(rng) + random_unit(rng) + random_unit(rng) + random_unit(rng);
@@ -685,9 +724,11 @@ static void add_thunder_segment(thunder_build *b, const float from[3], const flo
   float frames_per_m = NOISE_SAMPLE_RATE_HZ / 343.0f;
   noise_thunder_segment *segment = &voice->segment[voice->segments++];
   segment->start = near * frames_per_m;
-  /* A side-on segment arrives at once; below a quarter frame the pulse is an N-wave. */
-  segment->width = fmaxf(0.25f, (far - near) * frames_per_m);
-  float amplitude = 0.0056f * weight * length_m * THUNDER_REFERENCE_M / length3(mid) /
+  /* Fine steps wander in range by a random walk, so even a side-on segment spreads. */
+  float wander_m = 0.28f * sqrtf(length_m * THUNDER_FINE_STEP_M);
+  float spread_m = far - near;
+  segment->width = sqrtf(spread_m * spread_m + wander_m * wander_m) * frames_per_m;
+  float amplitude = 8.9f * weight * length_m * THUNDER_REFERENCE_M / length3(mid) /
                     segment->width;
   float horizontal = sqrtf(mid[0] * mid[0] + mid[1] * mid[1]);
   float pan = 0.25f * NOISE_PI * (1.0f + (horizontal > 0.0f ? mid[0] / horizontal : 0.0f));
@@ -787,19 +828,25 @@ static noise_result start_thunder(noise_gen *gen, position_polar position) {
 
   qsort(voice->segment, voice->segments, sizeof(voice->segment[0]),
         compare_thunder_segments);
-  voice->period = 0.001f * NOISE_SAMPLE_RATE_HZ * random_between(rng, 6.0f, 14.0f) *
-                  sqrtf(sqrtf(distance / THUNDER_REFERENCE_M));
   float first = voice->segment[0].start;
   float last = 0.0f;
   for (unsigned i = 0; i < voice->segments; ++i) {
     voice->segment[i].start -= first;
-    float end = voice->segment[i].start + voice->segment[i].width + voice->period;
+    float end = voice->segment[i].start + voice->segment[i].width;
     if (end > last) last = end;
   }
-  float air_cutoff = fminf(12000.0f, fmaxf(200.0f, 4.0e6f / distance));
-  voice->air_alpha = -expm1f(-2.0f * NOISE_PI * air_cutoff / NOISE_SAMPLE_RATE_HZ);
-  /* 256 frames let the air filter settle after the last pulse. */
-  voice->length = (uint32_t)last + 256u;
+  /* N-waves last 6 to 14 ms at 1 km and lengthen with the fourth root of distance. */
+  float period_s = 0.001f * random_between(rng, 6.0f, 14.0f) *
+                   sqrtf(sqrtf(distance / THUNDER_REFERENCE_M));
+  float air_cutoff = fminf(6000.0f, fmaxf(150.0f, 1000.0f *
+      powf(THUNDER_REFERENCE_M / distance, 0.6f)));
+  for (unsigned channel = 0; channel < 2; ++channel) {
+    biquad_tune(&voice->pulse[channel], 1, 1.0f / period_s, 0.7f);
+    biquad_tune(&voice->air[channel][0], 0, air_cutoff, 0.5411961f);
+    biquad_tune(&voice->air[channel][1], 0, air_cutoff, 1.3065630f);
+  }
+  /* 4096 frames let the filters ring out after the last arrival. */
+  voice->length = (uint32_t)last + 4096u;
   return NOISE_OK;
 }
 
@@ -812,64 +859,107 @@ noise_result noise_trigger_thunder(noise_gen *gen, const thunder_strike *strike)
   return start_thunder(gen, strike->position);
 }
 
-/* Integral of the unit N-wave 1 - 2x/period over [0, x]; zero outside the pulse. */
-static float n_wave_integral(float x, float period) {
-  if (x <= 0.0f || x >= period) return 0.0f;
-  return x - x * x / period;
-}
-
 static void thunder_voice_next(uint32_t *rng, noise_thunder_voice *voice, float out[2]) {
-  uint32_t now = voice->elapsed;
-  float t = (float)now;
-  while (voice->next < voice->segments && voice->segment[voice->next].start <= t) {
+  float t = (float)voice->elapsed;
+  const noise_thunder_segment *segment = voice->segment;
+  while (voice->next < voice->segments && segment[voice->next].start < t + 1.0f) {
     ++voice->next;
   }
-  const noise_thunder_segment *segment = voice->segment;
   while (voice->first < voice->next &&
-         t >= segment[voice->first].start + segment[voice->first].width + voice->period) {
+         t >= segment[voice->first].start + segment[voice->first].width) {
     ++voice->first;
   }
-  float pressure[2] = {0.0f, 0.0f};
+  /* Each segment adds a box over its arrival spread; the filters shape it into pulses. */
+  float excitation[2] = {0.0f, 0.0f};
   for (unsigned i = voice->first; i < voice->next; ++i) {
     float x = t - segment[i].start;
-    /* An N-wave smeared over the segment's arrival spread: two opposite parabolas. */
-    float smeared = n_wave_integral(x, voice->period) -
-                    n_wave_integral(x - segment[i].width, voice->period);
-    pressure[0] += segment[i].gain[0] * smeared;
-    pressure[1] += segment[i].gain[1] * smeared;
-    /* Each fine step deviates randomly from the segment and leaves its own N-wave. */
-    if (x < segment[i].width && voice->pulses < NOISE_THUNDER_PULSES &&
-        random_unit(rng) < segment[i].pulse_rate) {
-      float scale = THUNDER_ROUGHNESS * random_gaussian(rng) / segment[i].pulse_rate;
-      noise_thunder_pulse *pulse =
-          &voice->pulse[(voice->pulse_head + voice->pulses++) % NOISE_THUNDER_PULSES];
-      pulse->start = now;
-      pulse->gain[0] = scale * segment[i].gain[0];
-      pulse->gain[1] = scale * segment[i].gain[1];
+    float overlap = fminf(x + 1.0f, segment[i].width) - fmaxf(x, 0.0f);
+    if (overlap <= 0.0f) continue;
+    float share = overlap;
+    /* Each fine step deviates randomly from the segment and leaves its own pulse. */
+    if (random_unit(rng) < segment[i].pulse_rate) {
+      share += THUNDER_ROUGHNESS * random_gaussian(rng) / segment[i].pulse_rate;
     }
-  }
-  while (voice->pulses &&
-         (float)(now - voice->pulse[voice->pulse_head].start) >= voice->period) {
-    voice->pulse_head = (voice->pulse_head + 1) % NOISE_THUNDER_PULSES;
-    --voice->pulses;
-  }
-  for (unsigned i = 0; i < voice->pulses; ++i) {
-    const noise_thunder_pulse *pulse =
-        &voice->pulse[(voice->pulse_head + i) % NOISE_THUNDER_PULSES];
-    float shape = 1.0f - 2.0f * (float)(now - pulse->start) / voice->period;
-    pressure[0] += pulse->gain[0] * shape;
-    pressure[1] += pulse->gain[1] * shape;
+    excitation[0] += segment[i].gain[0] * share;
+    excitation[1] += segment[i].gain[1] * share;
   }
   for (unsigned channel = 0; channel < 2; ++channel) {
-    float *air = voice->air[channel];
-    air[0] += voice->air_alpha * (pressure[channel] - air[0]);
-    air[1] += voice->air_alpha * (air[0] - air[1]);
-    out[channel] = air[1];
+    float pulse = biquad_next(&voice->pulse[channel], excitation[channel]);
+    out[channel] = biquad_next(&voice->air[channel][1],
+                               biquad_next(&voice->air[channel][0], pulse));
   }
   if (++voice->elapsed == voice->length) voice->length = 0;
 }
 
-static void thunder_next(noise_gen *gen, float *left, float *right, float *send) {
+/* Unity below 0.5, then a tanh knee toward 1: near booms have about 25 dB crest. */
+static float thunder_limit(float x) {
+  float magnitude = fabsf(x);
+  if (magnitude <= 0.5f) return x;
+  return copysignf(0.5f + 0.5f * tanhf(2.0f * (magnitude - 0.5f)), x);
+}
+
+/* Six-line FDN step: damped reads, conference-matrix scatter, stereo taps. */
+static void fdn_next(float *buffer, const unsigned *length, const unsigned *offset,
+                     unsigned *position, float *damping, float damping_alpha,
+                     const float *feedback_gain, float send, float out[2]) {
+  float delay[NOISE_REVERB_LINES];
+  for (unsigned i = 0; i < NOISE_REVERB_LINES; ++i) {
+    float value = buffer[offset[i] + position[i]];
+    damping[i] += damping_alpha * (value - damping[i]);
+    delay[i] = damping[i];
+  }
+  const float scatter = 0.447213595f;
+  float feedback[NOISE_REVERB_LINES] = {
+    scatter * (delay[1] + delay[2] + delay[3] + delay[4] + delay[5]),
+    scatter * (delay[0] + delay[2] - delay[3] - delay[4] + delay[5]),
+    scatter * (delay[0] + delay[1] + delay[3] - delay[4] - delay[5]),
+    scatter * (delay[0] - delay[1] + delay[2] + delay[4] - delay[5]),
+    scatter * (delay[0] - delay[1] - delay[2] + delay[3] + delay[5]),
+    scatter * (delay[0] + delay[1] - delay[2] - delay[3] + delay[4])
+  };
+  for (unsigned i = 0; i < NOISE_REVERB_LINES; ++i) {
+    buffer[offset[i] + position[i]] = 0.408248290f * send + feedback_gain[i] * feedback[i];
+    if (++position[i] == length[i]) position[i] = 0;
+  }
+  out[0] = 0.577350269f * delay[0] + 0.288675135f * delay[1] -
+           0.288675135f * delay[2] - 0.577350269f * delay[3] -
+           0.288675135f * delay[4] + 0.288675135f * delay[5];
+  out[1] = 0.5f * delay[1] + 0.5f * delay[2] - 0.5f * delay[4] - 0.5f * delay[5];
+}
+
+/* Runs at a quarter rate: thunder is mostly below 2 kHz, and memory drops by four. */
+static void thunder_reverb_next(noise_gen *gen, float send, float wet[2]) {
+  float decay = gen->config.thunder_reverb_decay_s;
+  if (decay != gen->thunder_reverb_decay_cache) {
+    gen->thunder_reverb_decay_cache = decay;
+    float rate = (float)NOISE_SAMPLE_RATE_HZ / THUNDER_REVERB_DECIMATION;
+    for (unsigned i = 0; i < NOISE_REVERB_LINES; ++i) {
+      gen->thunder_reverb_feedback[i] =
+          powf(0.001f, (float)thunder_reverb_length[i] / (decay * rate));
+    }
+  }
+  gen->thunder_reverb_input += send;
+  if (++gen->thunder_reverb_phase == THUNDER_REVERB_DECIMATION) {
+    gen->thunder_reverb_phase = 0;
+    float *previous = gen->thunder_reverb_output[0];
+    float *current = gen->thunder_reverb_output[1];
+    previous[0] = current[0];
+    previous[1] = current[1];
+    /* Damping alpha 0.5 at 11025 Hz: about a 1.2 kHz loop low-pass. */
+    fdn_next(gen->thunder_reverb, thunder_reverb_length, thunder_reverb_offset,
+             gen->thunder_reverb_position, gen->thunder_reverb_damping, 0.5f,
+             gen->thunder_reverb_feedback,
+             gen->thunder_reverb_input / THUNDER_REVERB_DECIMATION, current);
+    gen->thunder_reverb_input = 0.0f;
+  }
+  float blend = (float)gen->thunder_reverb_phase / THUNDER_REVERB_DECIMATION;
+  for (unsigned channel = 0; channel < 2; ++channel) {
+    wet[channel] = gen->thunder_reverb_output[0][channel] + blend *
+        (gen->thunder_reverb_output[1][channel] - gen->thunder_reverb_output[0][channel]);
+  }
+}
+
+static void thunder_next(noise_gen *gen, float *left, float *right) {
   const noise_config *c = &gen->config;
   if (c->thunder_gain > 0.0f && c->thunder_rate_per_min > 0.0f) {
     int trigger = !gen->thunder_started;
@@ -890,43 +980,32 @@ static void thunder_next(noise_gen *gen, float *left, float *right, float *send)
       (void)start_thunder(gen, position);
     }
   }
+  float sum[2] = {0.0f, 0.0f};
   for (unsigned i = 0; i < NOISE_THUNDER_VOICES; ++i) {
     if (!gen->thunder[i].length) continue;
     float out[2];
     thunder_voice_next(&gen->thunder_rng, &gen->thunder[i], out);
-    *left += c->thunder_gain * out[0];
-    *right += c->thunder_gain * out[1];
-    *send += c->thunder_gain * 0.5f * (out[0] + out[1]);
+    sum[0] += c->thunder_gain * out[0];
+    sum[1] += c->thunder_gain * out[1];
   }
+  if (c->thunder_reverb_gain > 0.0f) {
+    float wet[2];
+    /* Unity send: gain 0.5 puts the wet about 3 dB under the dry roll. */
+    thunder_reverb_next(gen, sum[0] + sum[1], wet);
+    sum[0] += c->thunder_reverb_gain * wet[0];
+    sum[1] += c->thunder_reverb_gain * wet[1];
+  }
+  *left += thunder_limit(sum[0]);
+  *right += thunder_limit(sum[1]);
 }
 
 static void reverb_next(noise_gen *gen, float send, float gain,
                         float *left, float *right) {
-  float delay[NOISE_REVERB_LINES];
-  for (unsigned i = 0; i < NOISE_REVERB_LINES; ++i) {
-    float value = gen->reverb[reverb_offset[i] + gen->reverb_position[i]];
-    gen->reverb_damping[i] += 0.16f * (value - gen->reverb_damping[i]);
-    delay[i] = gen->reverb_damping[i];
-  }
-  const float scatter = 0.447213595f;
-  float feedback[NOISE_REVERB_LINES] = {
-    scatter * (delay[1] + delay[2] + delay[3] + delay[4] + delay[5]),
-    scatter * (delay[0] + delay[2] - delay[3] - delay[4] + delay[5]),
-    scatter * (delay[0] + delay[1] + delay[3] - delay[4] - delay[5]),
-    scatter * (delay[0] - delay[1] + delay[2] + delay[4] - delay[5]),
-    scatter * (delay[0] - delay[1] - delay[2] + delay[3] + delay[5]),
-    scatter * (delay[0] + delay[1] - delay[2] - delay[3] + delay[4])
-  };
-  for (unsigned i = 0; i < NOISE_REVERB_LINES; ++i) {
-    gen->reverb[reverb_offset[i] + gen->reverb_position[i]] =
-        0.408248290f * send + gen->reverb_feedback[i] * feedback[i];
-    if (++gen->reverb_position[i] == reverb_length[i]) gen->reverb_position[i] = 0;
-  }
-  *left += gain * (0.577350269f * delay[0] + 0.288675135f * delay[1] -
-                   0.288675135f * delay[2] - 0.577350269f * delay[3] -
-                   0.288675135f * delay[4] + 0.288675135f * delay[5]);
-  *right += gain * (0.5f * delay[1] + 0.5f * delay[2] -
-                    0.5f * delay[4] - 0.5f * delay[5]);
+  float out[2];
+  fdn_next(gen->reverb, reverb_length, reverb_offset, gen->reverb_position,
+           gen->reverb_damping, 0.16f, gen->reverb_feedback, send, out);
+  *left += gain * out[0];
+  *right += gain * out[1];
 }
 
 static int16_t to_sample(noise_gen *gen, float value) {
@@ -1002,7 +1081,7 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
     gen->direct[0][gen->direct_position] = 0.0f;
     gen->direct[1][gen->direct_position] = 0.0f;
     if (++gen->direct_position == NOISE_DIRECT_SAMPLES) gen->direct_position = 0;
-    thunder_next(gen, &left, &right, &send);
+    thunder_next(gen, &left, &right);
     if (gen->config.reverb_gain > 0.0f ||
         gen->config.weather_mod_amount[WEATHER_MOD_REVERB_GAIN] != 0.0f) {
       reverb_next(gen, send, reverb_gain, &left, &right);
