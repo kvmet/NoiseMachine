@@ -275,6 +275,63 @@ static void test_automatic_water_bubbles(void) {
   assert(a.voices[0].mode[1].remaining == 0);
 }
 
+static void test_roof_surfaces(void) {
+  noise_config c = silent_config();
+  droplet drop = water_drop();
+  drop.bubble_radius_m = 0.0f;
+  drop.surface = PLASTIC;
+  assert(noise_init(&a, &c, 51) == NOISE_OK);
+  assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
+  double plastic_damping = -log(sqrt(a.voices[0].mode[1].radius_squared)) *
+                           NOISE_SAMPLE_RATE_HZ;
+  float plastic_lowpass = a.voices[0].material_lowpass_alpha;
+  assert(a.voices[0].mode_count == 3);
+  assert(fabs(plastic_damping - 110.0) < 0.01);
+  assert(fabs(plastic_lowpass - (-expm1(-2.0 * TEST_PI * 1600.0 /
+                                        NOISE_SAMPLE_RATE_HZ))) < 1e-6);
+
+  drop.surface = ASPHALT;
+  assert(noise_init(&b, &c, 51) == NOISE_OK);
+  assert(noise_trigger_drop(&b, &drop) == NOISE_OK);
+  double asphalt_damping = -log(sqrt(b.voices[0].mode[1].radius_squared)) *
+                           NOISE_SAMPLE_RATE_HZ;
+  assert(fabs(asphalt_damping - 1600.0) < 0.1);
+  assert(b.voices[0].material_lowpass_alpha == 1.0f);
+
+  drop.surface = ASPHALT_ROOF;
+  assert(noise_init(&b, &c, 51) == NOISE_OK);
+  assert(noise_trigger_drop(&b, &drop) == NOISE_OK);
+  double roof_damping = -log(sqrt(b.voices[0].mode[1].radius_squared)) *
+                        NOISE_SAMPLE_RATE_HZ;
+  assert(fabs(roof_damping - 300.0) < 0.1);
+  assert(b.voices[0].material_lowpass_alpha < plastic_lowpass);
+  assert(b.voices[0].material_lowpass_alpha > 0.0f);
+
+  drop.surface = TIN_ROOF;
+  assert(noise_init(&a, &c, 51) == NOISE_OK);
+  assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
+  static const double base_frequency[4] = {320.0, 730.0, 1650.0, 3100.0};
+  static const double damping[4] = {120.0, 170.0, 260.0, 420.0};
+  double first_tuning = 0.0;
+  int varied_tuning = 0;
+  assert(a.voices[0].mode_count == 5);
+  for (unsigned i = 0; i < 4; ++i) {
+    noise_mode mode = a.voices[0].mode[i + 1];
+    double q = sqrt(mode.radius_squared);
+    double frequency = acos(mode.coefficient / (2.0 * q)) *
+                       NOISE_SAMPLE_RATE_HZ / (2.0 * TEST_PI);
+    double actual_damping = -log(q) * NOISE_SAMPLE_RATE_HZ;
+    double tuning = frequency / base_frequency[i];
+    assert(tuning >= 0.85 && tuning <= 1.15);
+    assert(fabs(actual_damping - damping[i]) < 0.1);
+    if (i == 0) first_tuning = tuning;
+    else if (fabs(tuning - first_tuning) > 1e-4) varied_tuning = 1;
+  }
+  assert(varied_tuning);
+  assert(fabs(a.voices[0].material_lowpass_alpha -
+              (-expm1(-2.0 * TEST_PI * 2500.0 / NOISE_SAMPLE_RATE_HZ))) < 1e-6);
+}
+
 static void test_lifetimes_and_capacity(void) {
   noise_config c = silent_config();
   c.reverb_gain = 0.3f;
@@ -637,6 +694,7 @@ int main(void) {
   test_bubble_physics();
   test_water_controls();
   test_automatic_water_bubbles();
+  test_roof_surfaces();
   test_lifetimes_and_capacity();
   test_spatial_geometry();
   test_spatial_bypass_and_distance();

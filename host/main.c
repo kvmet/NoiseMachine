@@ -46,7 +46,7 @@ static void print_usage(const char *program) {
       "  -v             vary rain with the Markov controller\n"
       "  -l minimum     minimum varying intensity, 0..1\n"
       "  -u maximum     maximum varying intensity, 0..1\n"
-      "  -m mixed|water|dirt|leaf|concrete|glass|metal\n"
+      "  -m mixed|water|dirt|leaf|concrete|glass|metal|plastic|asphalt|asphalt-roof|tin-roof\n"
       "  -n rate        arrivals/second at full intensity, 0..2000\n"
       "  -b metres      ear spacing / head diameter, 0..0.5; default 0.18\n"
       "  -a amount      head model strength, 0..1; 0 bypasses it\n"
@@ -114,7 +114,10 @@ int main(int argc, char **argv) {
         config.ambient_gain[kind] = 0.3f;
       }
     } else if (strcmp(arg, "-m") == 0) {
-      static const char *names[] = {"water", "dirt", "leaf", "concrete", "glass", "metal"};
+      static const char *names[] = {
+        "water", "dirt", "leaf", "concrete", "glass", "metal", "plastic", "asphalt",
+        "asphalt-roof", "tin-roof"
+      };
       if (strcmp(value, "mixed") == 0) {
         noise_config defaults;
         noise_config_default(&defaults);

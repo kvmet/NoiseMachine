@@ -30,6 +30,10 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlConcreteWeight,
   NoiseControlGlassWeight,
   NoiseControlMetalWeight,
+  NoiseControlPlasticWeight,
+  NoiseControlAsphaltWeight,
+  NoiseControlAsphaltRoofWeight,
+  NoiseControlTinRoofWeight,
   NoiseControlMinDistance,
   NoiseControlMaxDistance,
   NoiseControlStereoWidth,
@@ -49,6 +53,10 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlModConcrete,
   NoiseControlModGlass,
   NoiseControlModMetal,
+  NoiseControlModPlastic,
+  NoiseControlModAsphalt,
+  NoiseControlModAsphaltRoof,
+  NoiseControlModTinRoof,
   NoiseControlWaterImpactMin,
   NoiseControlWaterImpactMax,
   NoiseControlWaterBubbleProbability,
@@ -250,7 +258,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 
 - (NSString *)formattedValue:(double)value control:(NoiseControl)control {
   if (control == NoiseControlDropRate) return [NSString stringWithFormat:@"%.0f", value];
-  if (control >= NoiseControlWaterWeight && control <= NoiseControlMetalWeight) {
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlTinRoofWeight) {
     return [NSString stringWithFormat:@"%.6g", value];
   }
   if (control == NoiseControlStereoWidth || control == NoiseControlMinDistance ||
@@ -263,7 +271,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 - (void)storeControl:(NoiseControl)control value:(double)value {
   value = fmin(_maximum[control], fmax(_minimum[control], value));
   atomic_store_explicit(&_controls[control], (float)value, memory_order_relaxed);
-  if (control >= NoiseControlWaterWeight && control <= NoiseControlMetalWeight) {
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlTinRoofWeight) {
     _sliders[control].doubleValue = value > 0.0 ? fmax(-7.0, log10(value)) : -7.0;
   } else {
     _sliders[control].doubleValue = _logarithmic[control] ? log(value) : value;
@@ -273,10 +281,10 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 
 - (void)setControl:(NoiseControl)control value:(double)value {
   value = fmin(_maximum[control], fmax(_minimum[control], value));
-  if (control >= NoiseControlWaterWeight && control <= NoiseControlMetalWeight &&
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlTinRoofWeight &&
       value == 0.0) {
     double other = 0.0;
-    for (NoiseControl i = NoiseControlWaterWeight; i <= NoiseControlMetalWeight; ++i) {
+    for (NoiseControl i = NoiseControlWaterWeight; i <= NoiseControlTinRoofWeight; ++i) {
       if (i != control) other += [self controlValue:i];
     }
     if (other == 0.0) {
@@ -344,8 +352,10 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   label.alignment = NSTextAlignmentRight;
   [label.widthAnchor constraintEqualToConstant:145.0].active = YES;
 
-  BOOL surfaceWeight = control >= NoiseControlWaterWeight && control <= NoiseControlMetalWeight;
-  double sliderValue = surfaceWeight ? log10(value) : (logarithmic ? log(value) : value);
+  BOOL surfaceWeight = control >= NoiseControlWaterWeight &&
+                       control <= NoiseControlTinRoofWeight;
+  double sliderValue = surfaceWeight ? (value > 0.0 ? log10(value) : -7.0) :
+                                       (logarithmic ? log(value) : value);
   double sliderMinimum = surfaceWeight ? -7.0 : (logarithmic ? log(minimum) : minimum);
   double sliderMaximum = surfaceWeight ? 0.0 : (logarithmic ? log(maximum) : maximum);
   NSSlider *slider = [NSSlider sliderWithValue:sliderValue
@@ -383,7 +393,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 - (void)sliderChanged:(NSSlider *)sender {
   NoiseControl control = (NoiseControl)sender.tag;
   double value;
-  if (control >= NoiseControlWaterWeight && control <= NoiseControlMetalWeight) {
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlTinRoofWeight) {
     value = sender.doubleValue <= -7.0 ? 0.0 : pow(10.0, sender.doubleValue);
   } else {
     value = _logarithmic[control] ? exp(sender.doubleValue) : sender.doubleValue;
@@ -507,7 +517,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   _appliedVary = defaults.vary_rain;
 
   _window = [[NSWindow alloc]
-      initWithContentRect:NSMakeRect(0.0, 0.0, 650.0, 720.0)
+      initWithContentRect:NSMakeRect(0.0, 0.0, 650.0, 770.0)
                 styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                           NSWindowStyleMaskMiniaturizable
                   backing:NSBackingStoreBuffered
@@ -582,6 +592,14 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                  value:defaults.surface_weight[GLASS] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Metal" control:NoiseControlMetalWeight
                  value:defaults.surface_weight[METAL] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Plastic" control:NoiseControlPlasticWeight
+                 value:defaults.surface_weight[PLASTIC] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Asphalt" control:NoiseControlAsphaltWeight
+                 value:defaults.surface_weight[ASPHALT] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Asphalt roof" control:NoiseControlAsphaltRoofWeight
+                 value:defaults.surface_weight[ASPHALT_ROOF] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Tin roof" control:NoiseControlTinRoofWeight
+                 value:defaults.surface_weight[TIN_ROOF] minimum:0 maximum:1 logarithmic:NO],
       seedRow
   ]];
 
@@ -666,6 +684,18 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Metal" control:NoiseControlModMetal
                  value:defaults.weather_mod_amount[WEATHER_MOD_METAL_WEIGHT]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Plastic" control:NoiseControlModPlastic
+                 value:defaults.weather_mod_amount[WEATHER_MOD_PLASTIC_WEIGHT]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Asphalt" control:NoiseControlModAsphalt
+                 value:defaults.weather_mod_amount[WEATHER_MOD_ASPHALT_WEIGHT]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Asphalt roof" control:NoiseControlModAsphaltRoof
+                 value:defaults.weather_mod_amount[WEATHER_MOD_ASPHALT_ROOF_WEIGHT]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Tin roof" control:NoiseControlModTinRoof
+                 value:defaults.weather_mod_amount[WEATHER_MOD_TIN_ROOF_WEIGHT]
                minimum:-1 maximum:1 logarithmic:NO]
   ]];
 
@@ -678,7 +708,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
     [tabs addTabViewItem:tab];
   }
   [tabs.widthAnchor constraintEqualToConstant:610.0].active = YES;
-  [tabs.heightAnchor constraintEqualToConstant:570.0].active = YES;
+  [tabs.heightAnchor constraintEqualToConstant:620.0].active = YES;
 
   _playButton = [NSButton buttonWithTitle:@"Start" target:self
                                    action:@selector(togglePlayback:)];

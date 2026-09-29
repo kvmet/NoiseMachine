@@ -40,7 +40,8 @@ def main():
             raw = destination.read_bytes()
             assert struct.unpack_from("<I", raw, 4)[0] == len(raw) - 8
             assert struct.unpack_from("<I", raw, 40)[0] == len(samples)
-        for material in ("water", "dirt", "leaf", "concrete", "glass", "metal", "mixed"):
+        for material in ("water", "dirt", "leaf", "concrete", "glass", "metal",
+                         "plastic", "asphalt", "asphalt-roof", "tin-roof", "mixed"):
             result = run(str(host), "-k", "rain", "-r", "1", "-m", material,
                          "-d", "3", str(destination), capture_output=True, text=True)
             assert "capacity losses: 0" in result.stdout, result.stdout

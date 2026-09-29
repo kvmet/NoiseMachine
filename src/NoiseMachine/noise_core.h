@@ -14,6 +14,7 @@ extern "C" {
 #define NOISE_REVERB_LINES 6u
 #define NOISE_REVERB_SAMPLES 7304u
 #define NOISE_DIRECT_SAMPLES 128u
+#define NOISE_MAX_MODES 5u
 
 typedef enum noise_kind {
   NOISE_KIND_WHITE = 0,
@@ -30,6 +31,10 @@ typedef enum impact_surface {
   CONCRETE,
   GLASS,
   METAL,
+  PLASTIC,
+  ASPHALT,
+  ASPHALT_ROOF,
+  TIN_ROOF,
   NOISE_SURFACE_COUNT
 } impact_surface;
 
@@ -47,6 +52,10 @@ typedef enum weather_mod_destination {
   WEATHER_MOD_CONCRETE_WEIGHT,
   WEATHER_MOD_GLASS_WEIGHT,
   WEATHER_MOD_METAL_WEIGHT,
+  WEATHER_MOD_PLASTIC_WEIGHT,
+  WEATHER_MOD_ASPHALT_WEIGHT,
+  WEATHER_MOD_ASPHALT_ROOF_WEIGHT,
+  WEATHER_MOD_TIN_ROOF_WEIGHT,
   NOISE_WEATHER_MOD_COUNT
 } weather_mod_destination;
 
@@ -111,7 +120,8 @@ typedef struct noise_mode {
 } noise_mode;
 
 typedef struct noise_drop_voice {
-  noise_mode mode[3];
+  noise_mode mode[NOISE_MAX_MODES];
+  unsigned mode_count;
   float ear_gain[2];
   unsigned ear_delay[2];
   float delay_weight[2][4];
@@ -120,6 +130,8 @@ typedef struct noise_drop_voice {
   float head_feedback;
   float head_state[2];
   float head_previous_input;
+  float material_lowpass_alpha;
+  float material_lowpass_state[2];
   float lowpass_alpha;
   float lowpass_state;
   unsigned filter_tail;

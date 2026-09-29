@@ -195,14 +195,25 @@ static float mode_next(noise_mode *mode) {
   return value;
 }
 
-/* Preset frequencies/damping are sound design values, documented in docs/index.md. */
-static const float material_modes[NOISE_SURFACE_COUNT][5] = {
-  {0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
-  {450.0f, 1200.0f, 1100.0f, 1800.0f, 0.35f},
-  {1800.0f, 800.0f, 4200.0f, 1400.0f, 0.5f},
-  {1400.0f, 1400.0f, 3700.0f, 2200.0f, 0.45f},
-  {3200.0f, 160.0f, 7100.0f, 260.0f, 0.325f},
-  {1700.0f, 90.0f, 4300.0f, 150.0f, 0.4f}
+/* Presets add source low-pass cutoff after impact gain; zero bypasses it. */
+static const float material_modes[NOISE_SURFACE_COUNT][7] = {
+  {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+  {450.0f, 1200.0f, 1100.0f, 1800.0f, 0.35f, 1.0f, 0.0f},
+  {1800.0f, 800.0f, 4200.0f, 1400.0f, 0.5f, 1.0f, 0.0f},
+  {1400.0f, 1400.0f, 3700.0f, 2200.0f, 0.45f, 1.0f, 0.0f},
+  {3200.0f, 160.0f, 7100.0f, 260.0f, 0.325f, 1.0f, 0.0f},
+  {1700.0f, 90.0f, 4300.0f, 150.0f, 0.4f, 1.0f, 0.0f},
+  {220.0f, 110.0f, 650.0f, 220.0f, 0.65f, 0.5f, 1600.0f},
+  {300.0f, 1600.0f, 900.0f, 2600.0f, 0.25f, 0.3f, 0.0f},
+  {140.0f, 300.0f, 420.0f, 700.0f, 0.4f, 0.25f, 900.0f},
+  {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.35f, 2500.0f}
+};
+
+static const float tin_roof_modes[4][3] = {
+  {320.0f, 120.0f, 0.38f},
+  {730.0f, 170.0f, 0.27f},
+  {1650.0f, 260.0f, 0.18f},
+  {3100.0f, 420.0f, 0.10f}
 };
 
 static void spatial_init(noise_drop_voice *voice, const noise_config *config,
@@ -269,10 +280,15 @@ static noise_result start_drop(noise_gen *gen, const droplet *drop) {
   float amplitude = 0.035f * sqrtf(radius_ratio * radius_ratio * radius_ratio) *
                     drop->velocity_m_s / 4.0f;
   float impact_gain = drop->surface == WATER ? random_between(&gen->drop_rng,
-      gen->config.water_impact_gain_min, gen->config.water_impact_gain_max) : 1.0f;
+      gen->config.water_impact_gain_min, gen->config.water_impact_gain_max) :
+      material_modes[drop->surface][5];
+  float material_cutoff = material_modes[drop->surface][6];
+  voice->material_lowpass_alpha = material_cutoff > 0.0f ?
+      -expm1f(-2.0f * NOISE_PI * material_cutoff / NOISE_SAMPLE_RATE_HZ) : 1.0f;
   float impact_frequency = 1000.0f + 15000.0f * random_unit(&gen->drop_rng);
   mode_init(&voice->mode[0], impact_frequency, 2.0f * impact_frequency,
             amplitude * impact_gain, 0);
+  voice->mode_count = 1;
   if (drop->surface == WATER && drop->bubble_radius_m > 0.0f) {
     float r = drop->bubble_radius_m;
     float frequency = sqrtf(3.0f * 1.4f * NOISE_PRESSURE_PA / NOISE_WATER_DENSITY) /
@@ -286,11 +302,20 @@ static noise_result start_drop(noise_gen *gen, const droplet *drop) {
     mode_init(&voice->mode[1], frequency, damping / decay,
               bubble_gain * impact_gain * amplitude,
               (uint32_t)(0.002f * NOISE_SAMPLE_RATE_HZ));
+    voice->mode_count = 2;
+  } else if (drop->surface == TIN_ROOF) {
+    for (unsigned i = 0; i < 4; ++i) {
+      float tuning = 0.85f + 0.3f * random_unit(&gen->drop_rng);
+      mode_init(&voice->mode[i + 1], tin_roof_modes[i][0] * tuning,
+                tin_roof_modes[i][1], amplitude * tin_roof_modes[i][2], 0);
+    }
+    voice->mode_count = 5;
   } else if (drop->surface != WATER) {
     const float *m = material_modes[drop->surface];
     float tuning = 0.85f + 0.3f * random_unit(&gen->drop_rng);
     mode_init(&voice->mode[1], m[0] * tuning, m[1], amplitude * m[4], 0);
     mode_init(&voice->mode[2], m[2] * tuning, m[3], amplitude * m[4] * 0.5f, 0);
+    voice->mode_count = 3;
   }
   spatial_init(voice, &gen->config, drop->position);
   return NOISE_OK;
@@ -520,9 +545,16 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
       noise_drop_voice *voice = &gen->voices[i];
       float source = 0.0f;
       unsigned remaining = 0;
-      for (unsigned m = 0; m < 3; ++m) {
+      for (unsigned m = 0; m < voice->mode_count; ++m) {
         source += mode_next(&voice->mode[m]);
         remaining += voice->mode[m].remaining + voice->mode[m].delay;
+      }
+      if (voice->material_lowpass_alpha < 1.0f) {
+        for (unsigned stage = 0; stage < 2; ++stage) {
+          voice->material_lowpass_state[stage] += voice->material_lowpass_alpha *
+              (source - voice->material_lowpass_state[stage]);
+          source = voice->material_lowpass_state[stage];
+        }
       }
       source *= rain_gain;
       send += source;

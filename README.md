@@ -5,7 +5,8 @@ renderer and an Arduino sketch for eventual ESP32 audio output.
 
 - Mix white noise, pink noise, 50 Hz hum, and 60 Hz hum.
 - Generate individual rain impacts on water, dirt, leaves, concrete, glass,
-  and metal, with water-bubble resonance and optional Markov intensity changes.
+  metal, plastic, asphalt, tin roofs, and asphalt roofs, with water-bubble
+  resonance and optional Markov intensity changes.
 - Place drops around the listener with per-ear attenuation, fractional delay,
   a tunable spherical-head HRTF, rear filtering, and shared stereo reverb.
 
@@ -78,9 +79,10 @@ Run `./host/noise_host -h` for usage.
   unless `-r` supplies an initial value.
 - `-l NUMBER`, `-u NUMBER`: lower and upper varying-intensity bounds.
   Defaults: 0.15 and 0.85. An explicit initial intensity must be within them.
-- `-m mixed|water|dirt|leaf|concrete|glass|metal`: rain material. Default: mixed.
-  The mix is 37% water, 21% dirt, 26% leaves, 15% concrete, and 0.5% each
-  glass and metal.
+- `-m mixed|water|dirt|leaf|concrete|glass|metal|plastic|asphalt|asphalt-roof|tin-roof`:
+  rain material. Default: mixed. The mix is 37% water, 21% dirt, 26% leaves,
+  15% concrete, and 0.5% each glass and metal. Plastic, asphalt, and roof
+  weights default to zero.
 - `-n NUMBER`: arrival rate at intensity one, from 0 to 2000/s. Default: 900.
 - `-b METRES`: ear spacing and head diameter, from 0 to 0.5. Default: 0.18.
 - `-a NUMBER`: head effect from 0 to 1. Default: 1. Zero retains geometric
