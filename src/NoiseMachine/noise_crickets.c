@@ -53,8 +53,8 @@ static void cricket_init(uint32_t *rng, noise_cricket_voice *voice, float call_r
   voice->chirp_samples = voice->pulses * voice->pulse_samples;
   voice->singing = random_unit(rng) < CRICKET_SINGING_S / (CRICKET_SINGING_S + CRICKET_SILENT_S);
   voice->bout_samples = cricket_bout(rng, voice->singing);
-  voice->until_chirp =
-      (uint32_t)(random_unit(rng) * (float)cricket_period(rng, voice, call_rate_hz));
+  float phase = random_unit(rng);
+  voice->until_chirp = (uint32_t)(phase * (float)cricket_period(rng, voice, call_rate_hz));
 }
 
 static void cricket_place(noise_cricket_voice *voice, const noise_cricket_config *c,

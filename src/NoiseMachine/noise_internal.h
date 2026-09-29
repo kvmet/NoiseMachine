@@ -33,7 +33,11 @@ static inline float random_log_between(uint32_t *state, float low, float high) {
 
 /* Irwin-Hall sum of four uniforms, scaled to unit variance. */
 static inline float random_gaussian(uint32_t *rng) {
-  float sum = random_unit(rng) + random_unit(rng) + random_unit(rng) + random_unit(rng);
+  /* Separate statements fix the draw order, which C leaves unspecified within one sum. */
+  float sum = random_unit(rng);
+  sum += random_unit(rng);
+  sum += random_unit(rng);
+  sum += random_unit(rng);
   return 1.7320508f * (sum - 2.0f);
 }
 
