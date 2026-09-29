@@ -613,8 +613,8 @@ Configuration ranges are:
   ordered.
 - Weather modulation amounts: -1 to 1 each.
 
-Eight separate random streams drive ambient samples, wind, crickets, cicadas,
-thunder, arrivals, drop properties, and weather. Enabling ambient sound or
+Separate random streams drive ambient samples, wind, crickets, cicadas,
+thunder, thunder echoes, echo terrain, arrivals, drop properties, and weather. Enabling ambient sound or
 thunder cannot change the rain sequence. Seed zero aliases seed one. Results repeat for the same build,
 configuration, and seed, independent of fill size. Floating-point and
 libm differences can prevent bit-identical output across CPU/toolchain
@@ -629,7 +629,7 @@ and peak voice count.
 ## ESP32 and validation
 
 The sample rate, channel count, and pool size are compile-time constants.
-The engine occupies 58,280 bytes with the tested host ABI, plus 1,024
+The engine occupies 97,008 bytes with the tested host ABI, plus 1,024
 bytes for a 256-frame PCM buffer. Confirm `sizeof(noise_gen)` on the
 target ABI. Keep the generator in static storage, not a small task stack. Buffers are
 caller-owned. Trigonometry, exponentials, and square roots for drops run
