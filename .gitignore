@@ -67,3 +67,7 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+out/
+*.wav
+host/noise_host
+!host/Makefile
