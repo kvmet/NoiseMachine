@@ -310,7 +310,7 @@ static void test_spatial_bypass_and_distance(void) {
   unsigned wet_samples = 0;
   for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) {
     noise_fill(&b, frame, 1);
-    if (n < 1000) assert(abs(audio[2 * n] - 2 * frame[0]) <= 1);
+    if (n < 500) assert(abs(audio[2 * n] - 2 * frame[0]) <= 1);
     if (n > 2000) {
       assert(audio[2 * n] == frame[0]);
       assert(audio[2 * n + 1] == frame[1]);
@@ -469,6 +469,39 @@ static void test_output_saturation(void) {
   assert(saturated == a.state.clipped_samples);
 }
 
+static double reverb_energy(const noise_gen *gen) {
+  double energy = 0.0;
+  for (unsigned i = 0; i < NOISE_REVERB_SAMPLES; ++i) {
+    energy += (double)gen->reverb[i] * gen->reverb[i];
+  }
+  return energy;
+}
+
+static void test_reverb_decay(void) {
+  noise_config c = silent_config();
+  c.rain_gain = 1.0f;
+  c.reverb_gain = 1.0f;
+  c.stereo_width_m = 0.0f;
+  droplet drop = water_drop();
+  drop.bubble_radius_m = 0.0f;
+  assert(noise_init(&a, &c, 17) == NOISE_OK);
+  assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ / 4);
+  double early = reverb_energy(&a);
+  unsigned stereo_differences = 0;
+  for (unsigned i = 0; i < NOISE_SAMPLE_RATE_HZ / 4; ++i) {
+    stereo_differences += audio[2 * i] != audio[2 * i + 1];
+  }
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ / 4);
+  double middle = reverb_energy(&a);
+  for (unsigned i = 0; i < 8; ++i) noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ / 4);
+  double late = reverb_energy(&a);
+  assert(early > 0.0);
+  assert(middle < early);
+  assert(late < middle * 1e-6);
+  assert(stereo_differences > 100);
+}
+
 int main(void) {
   test_validation();
   test_silence_and_chunks();
@@ -483,6 +516,7 @@ int main(void) {
   test_random_stream_separation();
   test_slow_weather_slew();
   test_output_saturation();
+  test_reverb_decay();
   printf("core checks passed; engine size: %zu bytes\n", sizeof(noise_gen));
   return 0;
 }

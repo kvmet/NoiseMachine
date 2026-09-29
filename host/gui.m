@@ -1,7 +1,11 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <Cocoa/Cocoa.h>
 
+#include <errno.h>
+#include <math.h>
 #include <stdatomic.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "noise_core.h"
@@ -11,29 +15,50 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlPink,
   NoiseControlHum50,
   NoiseControlHum60,
-  NoiseControlRainIntensity,
   NoiseControlRainGain,
+  NoiseControlMaster,
+  NoiseControlRainIntensity,
+  NoiseControlMinRain,
+  NoiseControlMaxRain,
+  NoiseControlWeatherStep,
+  NoiseControlRainSlew,
   NoiseControlDropRate,
-  NoiseControlReverb,
+  NoiseControlFallHeight,
+  NoiseControlWaterWeight,
+  NoiseControlDirtWeight,
+  NoiseControlLeafWeight,
+  NoiseControlConcreteWeight,
+  NoiseControlGlassWeight,
+  NoiseControlMetalWeight,
+  NoiseControlMinDistance,
+  NoiseControlMaxDistance,
+  NoiseControlStereoWidth,
   NoiseControlHead,
   NoiseControlRear,
-  NoiseControlStereoWidth,
-  NoiseControlMaster,
+  NoiseControlReverb,
   NoiseControlCount
 };
 
-@interface NoiseAppDelegate : NSObject <NSApplicationDelegate>
+@interface NoiseAppDelegate : NSObject <NSApplicationDelegate, NSTextFieldDelegate>
 @end
 
 @implementation NoiseAppDelegate {
   NSWindow *_window;
   NSButton *_playButton;
+  NSButton *_varyButton;
   NSTextField *_statusLabel;
-  NSTextField *_valueLabels[NoiseControlCount];
+  NSTextField *_seedField;
+  NSSlider *_sliders[NoiseControlCount];
+  NSTextField *_valueFields[NoiseControlCount];
+  double _minimum[NoiseControlCount];
+  double _maximum[NoiseControlCount];
+  BOOL _logarithmic[NoiseControlCount];
   AudioUnit _audioUnit;
   noise_gen _generator;
   _Atomic(float) _controls[NoiseControlCount];
-  _Atomic(int) _surface;
+  _Atomic(int) _varyRain;
+  float _appliedRainControl;
+  int _appliedVary;
   BOOL _playing;
 }
 
@@ -47,44 +72,76 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   return [app renderFrames:frames into:buffers];
 }
 
-- (void)loadControlsIntoGenerator {
-  _generator.config.ambient_gain[NOISE_KIND_WHITE] =
-      atomic_load_explicit(&_controls[NoiseControlWhite], memory_order_relaxed);
-  _generator.config.ambient_gain[NOISE_KIND_PINK] =
-      atomic_load_explicit(&_controls[NoiseControlPink], memory_order_relaxed);
-  _generator.config.ambient_gain[HUM_50HZ] =
-      atomic_load_explicit(&_controls[NoiseControlHum50], memory_order_relaxed);
-  _generator.config.ambient_gain[HUM_60HZ] =
-      atomic_load_explicit(&_controls[NoiseControlHum60], memory_order_relaxed);
-  float rain = atomic_load_explicit(&_controls[NoiseControlRainIntensity],
-                                    memory_order_relaxed);
-  _generator.config.rain_intensity = rain;
-  _generator.state.rain_intensity = rain;
-  _generator.state.rain_target = rain;
-  _generator.config.rain_gain =
-      atomic_load_explicit(&_controls[NoiseControlRainGain], memory_order_relaxed);
-  _generator.config.max_drops_per_s =
-      atomic_load_explicit(&_controls[NoiseControlDropRate], memory_order_relaxed);
-  _generator.config.reverb_gain =
-      atomic_load_explicit(&_controls[NoiseControlReverb], memory_order_relaxed);
-  _generator.config.head_amount =
-      atomic_load_explicit(&_controls[NoiseControlHead], memory_order_relaxed);
-  _generator.config.rear_amount =
-      atomic_load_explicit(&_controls[NoiseControlRear], memory_order_relaxed);
-  _generator.config.stereo_width_m =
-      atomic_load_explicit(&_controls[NoiseControlStereoWidth], memory_order_relaxed);
-  _generator.config.master_gain =
-      atomic_load_explicit(&_controls[NoiseControlMaster], memory_order_relaxed);
+- (float)controlValue:(NoiseControl)control {
+  return atomic_load_explicit(&_controls[control], memory_order_relaxed);
+}
 
-  int surface = atomic_load_explicit(&_surface, memory_order_relaxed);
-  static const float mixed[NOISE_SURFACE_COUNT] = {
-      0.37f, 0.21f, 0.26f, 0.15f, 0.005f, 0.005f};
-  float sum = 0.0f;
+- (noise_config)configFromControls {
+  noise_config config;
+  noise_config_default(&config);
+  config.ambient_gain[NOISE_KIND_WHITE] = [self controlValue:NoiseControlWhite];
+  config.ambient_gain[NOISE_KIND_PINK] = [self controlValue:NoiseControlPink];
+  config.ambient_gain[HUM_50HZ] = [self controlValue:NoiseControlHum50];
+  config.ambient_gain[HUM_60HZ] = [self controlValue:NoiseControlHum60];
+  config.rain_gain = [self controlValue:NoiseControlRainGain];
+  config.master_gain = [self controlValue:NoiseControlMaster];
+  config.rain_intensity = [self controlValue:NoiseControlRainIntensity];
+  config.min_rain_intensity = [self controlValue:NoiseControlMinRain];
+  config.max_rain_intensity = [self controlValue:NoiseControlMaxRain];
+  config.vary_rain = atomic_load_explicit(&_varyRain, memory_order_relaxed);
+  config.weather_step_s = [self controlValue:NoiseControlWeatherStep];
+  config.rain_slew_s = [self controlValue:NoiseControlRainSlew];
+  config.max_drops_per_s = [self controlValue:NoiseControlDropRate];
+  config.fall_height_m = [self controlValue:NoiseControlFallHeight];
   for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
-    float weight = surface == 0 ? mixed[i] : ((int)i == surface - 1 ? 1.0f : 0.0f);
-    _generator.config.surface_weight[i] = weight;
-    sum += weight;
-    _generator.surface_cdf[i] = sum;
+    config.surface_weight[i] = [self controlValue:NoiseControlWaterWeight + i];
+  }
+  config.min_distance_m = [self controlValue:NoiseControlMinDistance];
+  config.max_distance_m = [self controlValue:NoiseControlMaxDistance];
+  config.stereo_width_m = [self controlValue:NoiseControlStereoWidth];
+  config.head_amount = [self controlValue:NoiseControlHead];
+  config.rear_amount = [self controlValue:NoiseControlRear];
+  config.reverb_gain = [self controlValue:NoiseControlReverb];
+  return config;
+}
+
+- (void)loadControlsIntoGenerator {
+  noise_config config = [self configFromControls];
+  _generator.config = config;
+  uint32_t weatherPeriod = (uint32_t)(config.weather_step_s * NOISE_SAMPLE_RATE_HZ);
+  if (_generator.weather_samples >= weatherPeriod) _generator.weather_samples = 0;
+  _generator.weather_period = weatherPeriod;
+  _generator.rain_slew = -expm1f(-1.0f / (config.rain_slew_s * NOISE_SAMPLE_RATE_HZ));
+
+  float sum = 0.0f;
+  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) sum += config.surface_weight[i];
+  float cumulative = 0.0f;
+  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
+    cumulative += config.surface_weight[i];
+    _generator.surface_cdf[i] = cumulative / sum;
+  }
+
+  float rain = config.rain_intensity;
+  if (rain != _appliedRainControl || config.vary_rain != _appliedVary) {
+    if (config.vary_rain) {
+      rain = fminf(config.max_rain_intensity, fmaxf(config.min_rain_intensity, rain));
+      float span = config.max_rain_intensity - config.min_rain_intensity;
+      float relative = span > 0.0f ? (rain - config.min_rain_intensity) / span : 0.0f;
+      _generator.state.weather_state = relative < 0.25f ? 0u : (relative < 0.75f ? 1u : 2u);
+      _generator.weather_samples = 0;
+    }
+    _generator.state.rain_intensity = rain;
+    _generator.state.rain_target = rain;
+    _appliedRainControl = config.rain_intensity;
+    _appliedVary = config.vary_rain;
+  } else if (!config.vary_rain) {
+    _generator.state.rain_intensity = rain;
+    _generator.state.rain_target = rain;
+  } else {
+    _generator.state.rain_intensity = fminf(config.max_rain_intensity,
+        fmaxf(config.min_rain_intensity, _generator.state.rain_intensity));
+    _generator.state.rain_target = fminf(config.max_rain_intensity,
+        fmaxf(config.min_rain_intensity, _generator.state.rain_target));
   }
 }
 
@@ -140,53 +197,177 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   return AudioUnitInitialize(_audioUnit);
 }
 
+- (NSString *)formattedValue:(double)value control:(NoiseControl)control {
+  if (control == NoiseControlDropRate) return [NSString stringWithFormat:@"%.0f", value];
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlMetalWeight) {
+    return [NSString stringWithFormat:@"%.6g", value];
+  }
+  if (control == NoiseControlStereoWidth || control == NoiseControlMinDistance ||
+      control == NoiseControlMaxDistance) {
+    return [NSString stringWithFormat:@"%.3f", value];
+  }
+  return [NSString stringWithFormat:@"%.2f", value];
+}
+
+- (void)storeControl:(NoiseControl)control value:(double)value {
+  value = fmin(_maximum[control], fmax(_minimum[control], value));
+  atomic_store_explicit(&_controls[control], (float)value, memory_order_relaxed);
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlMetalWeight) {
+    _sliders[control].doubleValue = value > 0.0 ? fmax(-7.0, log10(value)) : -7.0;
+  } else {
+    _sliders[control].doubleValue = _logarithmic[control] ? log(value) : value;
+  }
+  _valueFields[control].stringValue = [self formattedValue:value control:control];
+}
+
+- (void)setControl:(NoiseControl)control value:(double)value {
+  value = fmin(_maximum[control], fmax(_minimum[control], value));
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlMetalWeight &&
+      value == 0.0) {
+    double other = 0.0;
+    for (NoiseControl i = NoiseControlWaterWeight; i <= NoiseControlMetalWeight; ++i) {
+      if (i != control) other += [self controlValue:i];
+    }
+    if (other == 0.0) {
+      value = 0.001;
+      _statusLabel.stringValue = @"At least one surface weight must be above zero";
+    }
+  }
+  [self storeControl:control value:value];
+
+  if (control == NoiseControlMinRain && value > [self controlValue:NoiseControlMaxRain]) {
+    [self storeControl:NoiseControlMaxRain value:value];
+  } else if (control == NoiseControlMaxRain &&
+             value < [self controlValue:NoiseControlMinRain]) {
+    [self storeControl:NoiseControlMinRain value:value];
+  } else if (control == NoiseControlMinDistance &&
+             value > [self controlValue:NoiseControlMaxDistance]) {
+    [self storeControl:NoiseControlMaxDistance value:value];
+  } else if (control == NoiseControlMaxDistance &&
+             value < [self controlValue:NoiseControlMinDistance]) {
+    [self storeControl:NoiseControlMinDistance value:value];
+  }
+
+  if (atomic_load_explicit(&_varyRain, memory_order_relaxed) &&
+      (control == NoiseControlMinRain || control == NoiseControlMaxRain)) {
+    double rain = [self controlValue:NoiseControlRainIntensity];
+    rain = fmin([self controlValue:NoiseControlMaxRain],
+                fmax([self controlValue:NoiseControlMinRain], rain));
+    [self storeControl:NoiseControlRainIntensity value:rain];
+  }
+}
+
 - (NSView *)sliderRow:(NSString *)name control:(NoiseControl)control
-                 value:(double)value minimum:(double)minimum maximum:(double)maximum {
-  NSTextField *label = [NSTextField labelWithString:name];
-  label.alignment = NSTextAlignmentRight;
-  [label.widthAnchor constraintEqualToConstant:120.0].active = YES;
-
-  NSSlider *slider = [NSSlider sliderWithValue:value minValue:minimum maxValue:maximum
-                                        target:self action:@selector(controlChanged:)];
-  slider.tag = control;
-  slider.continuous = YES;
-  [slider.widthAnchor constraintEqualToConstant:270.0].active = YES;
-
-  NSTextField *valueLabel = [NSTextField labelWithString:@""];
-  valueLabel.font = [NSFont monospacedDigitSystemFontOfSize:12.0
-                                                    weight:NSFontWeightRegular];
-  [valueLabel.widthAnchor constraintEqualToConstant:62.0].active = YES;
-  _valueLabels[control] = valueLabel;
-  [self updateValueLabel:control value:value];
+                 value:(double)value minimum:(double)minimum maximum:(double)maximum
+           logarithmic:(BOOL)logarithmic {
+  _minimum[control] = minimum;
+  _maximum[control] = maximum;
+  _logarithmic[control] = logarithmic;
   atomic_init(&_controls[control], (float)value);
 
-  NSStackView *row = [NSStackView stackViewWithViews:@[label, slider, valueLabel]];
+  NSTextField *label = [NSTextField labelWithString:name];
+  label.alignment = NSTextAlignmentRight;
+  [label.widthAnchor constraintEqualToConstant:145.0].active = YES;
+
+  BOOL surfaceWeight = control >= NoiseControlWaterWeight && control <= NoiseControlMetalWeight;
+  double sliderValue = surfaceWeight ? log10(value) : (logarithmic ? log(value) : value);
+  double sliderMinimum = surfaceWeight ? -7.0 : (logarithmic ? log(minimum) : minimum);
+  double sliderMaximum = surfaceWeight ? 0.0 : (logarithmic ? log(maximum) : maximum);
+  NSSlider *slider = [NSSlider sliderWithValue:sliderValue
+                                      minValue:sliderMinimum
+                                      maxValue:sliderMaximum
+                                        target:self action:@selector(sliderChanged:)];
+  slider.tag = control;
+  slider.continuous = YES;
+  [slider.widthAnchor constraintEqualToConstant:280.0].active = YES;
+  _sliders[control] = slider;
+
+  NSTextField *field = [[NSTextField alloc] initWithFrame:NSZeroRect];
+  field.font = [NSFont monospacedDigitSystemFontOfSize:12.0 weight:NSFontWeightRegular];
+  field.alignment = NSTextAlignmentRight;
+  field.controlSize = NSControlSizeSmall;
+  field.target = self;
+  field.action = @selector(valueFieldChanged:);
+  field.delegate = self;
+  field.tag = control;
+  field.stringValue = [self formattedValue:value control:control];
+  [field.widthAnchor constraintEqualToConstant:72.0].active = YES;
+  _valueFields[control] = field;
+
+  NSStackView *row = [NSStackView stackViewWithViews:@[label, slider, field]];
   row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
   row.alignment = NSLayoutAttributeCenterY;
   row.spacing = 10.0;
   return row;
 }
 
-- (void)updateValueLabel:(NoiseControl)control value:(double)value {
-  if (control == NoiseControlDropRate) {
-    _valueLabels[control].stringValue = [NSString stringWithFormat:@"%.0f", value];
-  } else if (control == NoiseControlStereoWidth) {
-    _valueLabels[control].stringValue = [NSString stringWithFormat:@"%.3f", value];
+- (void)sliderChanged:(NSSlider *)sender {
+  NoiseControl control = (NoiseControl)sender.tag;
+  double value;
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlMetalWeight) {
+    value = sender.doubleValue <= -7.0 ? 0.0 : pow(10.0, sender.doubleValue);
   } else {
-    _valueLabels[control].stringValue = [NSString stringWithFormat:@"%.2f", value];
+    value = _logarithmic[control] ? exp(sender.doubleValue) : sender.doubleValue;
+  }
+  [self setControl:control value:value];
+}
+
+- (void)valueFieldChanged:(NSTextField *)sender {
+  NoiseControl control = (NoiseControl)sender.tag;
+  char *end;
+  errno = 0;
+  const char *text = sender.stringValue.UTF8String;
+  double value = strtod(text, &end);
+  if (!text[0] || end == text || *end || errno == ERANGE || !isfinite(value)) {
+    sender.stringValue = [self formattedValue:[self controlValue:control] control:control];
+    _statusLabel.stringValue = @"Enter a finite number";
+    return;
+  }
+  [self setControl:control value:value];
+}
+
+- (void)controlTextDidEndEditing:(NSNotification *)notification {
+  NSTextField *field = notification.object;
+  if (field.tag >= 0 && field.tag < NoiseControlCount) [self valueFieldChanged:field];
+}
+
+- (void)varyChanged:(NSButton *)sender {
+  int vary = sender.state == NSControlStateValueOn;
+  atomic_store_explicit(&_varyRain, vary, memory_order_relaxed);
+  if (vary) {
+    double rain = [self controlValue:NoiseControlRainIntensity];
+    rain = fmin([self controlValue:NoiseControlMaxRain],
+                fmax([self controlValue:NoiseControlMinRain], rain));
+    [self storeControl:NoiseControlRainIntensity value:rain];
   }
 }
 
-- (void)controlChanged:(NSSlider *)sender {
-  NoiseControl control = (NoiseControl)sender.tag;
-  atomic_store_explicit(&_controls[control], (float)sender.doubleValue,
-                        memory_order_relaxed);
-  [self updateValueLabel:control value:sender.doubleValue];
-}
+- (void)resetGenerator:(NSButton *)sender {
+  (void)sender;
+  const char *text = _seedField.stringValue.UTF8String;
+  char *end;
+  errno = 0;
+  unsigned long long parsed = strtoull(text, &end, 10);
+  if (!text[0] || text[0] < '0' || text[0] > '9' || *end || errno == ERANGE ||
+      parsed > UINT32_MAX) {
+    _statusLabel.stringValue = @"Seed must be an integer from 0 to 4294967295";
+    return;
+  }
 
-- (void)surfaceChanged:(NSPopUpButton *)sender {
-  atomic_store_explicit(&_surface, (int)sender.indexOfSelectedItem,
-                        memory_order_relaxed);
+  BOOL resume = _playing;
+  if (resume) AudioOutputUnitStop(_audioUnit);
+  noise_config config = [self configFromControls];
+  noise_result result = noise_init(&_generator, &config, (uint32_t)parsed);
+  _appliedRainControl = config.rain_intensity;
+  _appliedVary = config.vary_rain;
+  if (result != NOISE_OK) {
+    _playing = NO;
+    _playButton.title = @"Start";
+    _statusLabel.stringValue = @"Current parameters are invalid";
+    return;
+  }
+  if (resume) AudioOutputUnitStart(_audioUnit);
+  _statusLabel.stringValue = resume ? @"Playing from new seed" : @"Generator reset";
 }
 
 - (void)togglePlayback:(NSButton *)sender {
@@ -212,19 +393,42 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   }
 }
 
+- (NSTextField *)sectionLabel:(NSString *)text {
+  NSTextField *label = [NSTextField labelWithString:text];
+  label.font = [NSFont boldSystemFontOfSize:13.0];
+  return label;
+}
+
+- (NSView *)tabViewWithRows:(NSArray<NSView *> *)rows {
+  NSView *view = [[NSView alloc] initWithFrame:NSZeroRect];
+  NSStackView *stack = [NSStackView stackViewWithViews:rows];
+  stack.orientation = NSUserInterfaceLayoutOrientationVertical;
+  stack.alignment = NSLayoutAttributeLeading;
+  stack.spacing = 6.0;
+  stack.translatesAutoresizingMaskIntoConstraints = NO;
+  [view addSubview:stack];
+  [NSLayoutConstraint activateConstraints:@[
+      [stack.leadingAnchor constraintEqualToAnchor:view.leadingAnchor constant:14.0],
+      [stack.topAnchor constraintEqualToAnchor:view.topAnchor constant:14.0]
+  ]];
+  return view;
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
   (void)notification;
-  noise_config config;
-  noise_config_default(&config);
-  config.rain_intensity = 0.5f;
-  if (noise_init(&_generator, &config, 1) != NOISE_OK) {
+  noise_config defaults;
+  noise_config_default(&defaults);
+  defaults.rain_intensity = 0.5f;
+  if (noise_init(&_generator, &defaults, 1) != NOISE_OK) {
     [NSApp terminate:nil];
     return;
   }
-  atomic_init(&_surface, 0);
+  atomic_init(&_varyRain, defaults.vary_rain);
+  _appliedRainControl = defaults.rain_intensity;
+  _appliedVary = defaults.vary_rain;
 
   _window = [[NSWindow alloc]
-      initWithContentRect:NSMakeRect(0.0, 0.0, 520.0, 610.0)
+      initWithContentRect:NSMakeRect(0.0, 0.0, 650.0, 720.0)
                 styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                           NSWindowStyleMaskMiniaturizable
                   backing:NSBackingStoreBuffered
@@ -235,55 +439,97 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   NSTextField *title = [NSTextField labelWithString:@"Noise Machine"];
   title.font = [NSFont boldSystemFontOfSize:22.0];
   NSTextField *subtitle = [NSTextField labelWithString:
-      @"Changes apply continuously. Head and surface changes affect new drops."];
+      @"All engine parameters. Type exact values or use the sliders."];
   subtitle.textColor = NSColor.secondaryLabelColor;
 
-  NSStackView *controls = [NSStackView stackViewWithViews:@[
-      title,
-      subtitle,
-      [self sliderRow:@"White noise" control:NoiseControlWhite
-                 value:config.ambient_gain[NOISE_KIND_WHITE] minimum:0 maximum:1],
-      [self sliderRow:@"Pink noise" control:NoiseControlPink
-                 value:config.ambient_gain[NOISE_KIND_PINK] minimum:0 maximum:1],
-      [self sliderRow:@"50 Hz hum" control:NoiseControlHum50
-                 value:config.ambient_gain[HUM_50HZ] minimum:0 maximum:1],
-      [self sliderRow:@"60 Hz hum" control:NoiseControlHum60
-                 value:config.ambient_gain[HUM_60HZ] minimum:0 maximum:1],
-      [self sliderRow:@"Rain intensity" control:NoiseControlRainIntensity
-                 value:config.rain_intensity minimum:0 maximum:1],
+  NSView *mixer = [self tabViewWithRows:@[
+      [self sliderRow:@"White noise gain" control:NoiseControlWhite
+                 value:defaults.ambient_gain[NOISE_KIND_WHITE] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Pink noise gain" control:NoiseControlPink
+                 value:defaults.ambient_gain[NOISE_KIND_PINK] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"50 Hz hum gain" control:NoiseControlHum50
+                 value:defaults.ambient_gain[HUM_50HZ] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"60 Hz hum gain" control:NoiseControlHum60
+                 value:defaults.ambient_gain[HUM_60HZ] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Rain gain" control:NoiseControlRainGain
-                 value:config.rain_gain minimum:0 maximum:1],
-      [self sliderRow:@"Drop rate" control:NoiseControlDropRate
-                 value:config.max_drops_per_s minimum:0 maximum:2000],
-      [self sliderRow:@"Reverb" control:NoiseControlReverb
-                 value:config.reverb_gain minimum:0 maximum:1],
-      [self sliderRow:@"Head effect" control:NoiseControlHead
-                 value:config.head_amount minimum:0 maximum:1],
-      [self sliderRow:@"Rear filter" control:NoiseControlRear
-                 value:config.rear_amount minimum:0 maximum:1],
-      [self sliderRow:@"Stereo width (m)" control:NoiseControlStereoWidth
-                 value:config.stereo_width_m minimum:0 maximum:0.5],
+                 value:defaults.rain_gain minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Master gain" control:NoiseControlMaster
-                 value:config.master_gain minimum:0 maximum:1]
+                 value:defaults.master_gain minimum:0 maximum:1 logarithmic:NO]
   ]];
-  controls.orientation = NSUserInterfaceLayoutOrientationVertical;
-  controls.alignment = NSLayoutAttributeLeading;
-  controls.spacing = 8.0;
 
-  NSTextField *surfaceLabel = [NSTextField labelWithString:@"Surface"];
-  surfaceLabel.alignment = NSTextAlignmentRight;
-  [surfaceLabel.widthAnchor constraintEqualToConstant:120.0].active = YES;
-  NSPopUpButton *surface = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
-  [surface addItemsWithTitles:@[@"Mixed", @"Water", @"Dirt", @"Leaf",
-                                @"Concrete", @"Glass", @"Metal"]];
-  surface.target = self;
-  surface.action = @selector(surfaceChanged:);
-  [surface.widthAnchor constraintEqualToConstant:180.0].active = YES;
-  NSStackView *surfaceRow = [NSStackView stackViewWithViews:@[surfaceLabel, surface]];
-  surfaceRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-  surfaceRow.alignment = NSLayoutAttributeCenterY;
-  surfaceRow.spacing = 10.0;
-  [controls addArrangedSubview:surfaceRow];
+  _varyButton = [NSButton checkboxWithTitle:@"Vary rain automatically"
+                                     target:self action:@selector(varyChanged:)];
+  _varyButton.state = defaults.vary_rain ? NSControlStateValueOn : NSControlStateValueOff;
+  NSTextField *seedLabel = [NSTextField labelWithString:@"Seed"];
+  seedLabel.alignment = NSTextAlignmentRight;
+  [seedLabel.widthAnchor constraintEqualToConstant:145.0].active = YES;
+  _seedField = [[NSTextField alloc] initWithFrame:NSZeroRect];
+  _seedField.stringValue = @"1";
+  [_seedField.widthAnchor constraintEqualToConstant:130.0].active = YES;
+  NSButton *resetButton = [NSButton buttonWithTitle:@"Reset generator"
+                                             target:self action:@selector(resetGenerator:)];
+  NSStackView *seedRow = [NSStackView stackViewWithViews:@[seedLabel, _seedField, resetButton]];
+  seedRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+  seedRow.alignment = NSLayoutAttributeCenterY;
+  seedRow.spacing = 10.0;
+
+  NSView *rain = [self tabViewWithRows:@[
+      _varyButton,
+      [self sectionLabel:@"Weather"],
+      [self sliderRow:@"Rain intensity" control:NoiseControlRainIntensity
+                 value:defaults.rain_intensity minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Minimum intensity" control:NoiseControlMinRain
+                 value:defaults.min_rain_intensity minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Maximum intensity" control:NoiseControlMaxRain
+                 value:defaults.max_rain_intensity minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Weather interval (s)" control:NoiseControlWeatherStep
+                 value:defaults.weather_step_s minimum:0.1 maximum:3600 logarithmic:YES],
+      [self sliderRow:@"Rain slew (s)" control:NoiseControlRainSlew
+                 value:defaults.rain_slew_s minimum:0.01 maximum:60 logarithmic:YES],
+      [self sliderRow:@"Drops/s at full rain" control:NoiseControlDropRate
+                 value:defaults.max_drops_per_s minimum:0 maximum:2000 logarithmic:NO],
+      [self sliderRow:@"Fall height (m)" control:NoiseControlFallHeight
+                 value:defaults.fall_height_m minimum:0.01 maximum:1000 logarithmic:YES],
+      [self sectionLabel:@"Surface weights"],
+      [self sliderRow:@"Water" control:NoiseControlWaterWeight
+                 value:defaults.surface_weight[WATER] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Dirt" control:NoiseControlDirtWeight
+                 value:defaults.surface_weight[DIRT] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Leaf" control:NoiseControlLeafWeight
+                 value:defaults.surface_weight[LEAF] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Concrete" control:NoiseControlConcreteWeight
+                 value:defaults.surface_weight[CONCRETE] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Glass" control:NoiseControlGlassWeight
+                 value:defaults.surface_weight[GLASS] minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Metal" control:NoiseControlMetalWeight
+                 value:defaults.surface_weight[METAL] minimum:0 maximum:1 logarithmic:NO],
+      seedRow
+  ]];
+
+  NSView *spatial = [self tabViewWithRows:@[
+      [self sliderRow:@"Minimum distance (m)" control:NoiseControlMinDistance
+                 value:defaults.min_distance_m minimum:0.25 maximum:100 logarithmic:YES],
+      [self sliderRow:@"Maximum distance (m)" control:NoiseControlMaxDistance
+                 value:defaults.max_distance_m minimum:0.25 maximum:100 logarithmic:YES],
+      [self sliderRow:@"Stereo width (m)" control:NoiseControlStereoWidth
+                 value:defaults.stereo_width_m minimum:0 maximum:0.5 logarithmic:NO],
+      [self sliderRow:@"Head effect" control:NoiseControlHead
+                 value:defaults.head_amount minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Rear filter" control:NoiseControlRear
+                 value:defaults.rear_amount minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Reverb gain" control:NoiseControlReverb
+                 value:defaults.reverb_gain minimum:0 maximum:1 logarithmic:NO]
+  ]];
+
+  NSTabView *tabs = [[NSTabView alloc] initWithFrame:NSZeroRect];
+  for (NSArray *item in @[@[@"Mixer", mixer], @[@"Rain", rain], @[@"Spatial", spatial]]) {
+    NSTabViewItem *tab = [[NSTabViewItem alloc] initWithIdentifier:item[0]];
+    tab.label = item[0];
+    tab.view = item[1];
+    [tabs addTabViewItem:tab];
+  }
+  [tabs.widthAnchor constraintEqualToConstant:610.0].active = YES;
+  [tabs.heightAnchor constraintEqualToConstant:570.0].active = YES;
 
   _playButton = [NSButton buttonWithTitle:@"Start" target:self
                                    action:@selector(togglePlayback:)];
@@ -294,15 +540,18 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   playback.orientation = NSUserInterfaceLayoutOrientationHorizontal;
   playback.alignment = NSLayoutAttributeCenterY;
   playback.spacing = 12.0;
-  [controls addArrangedSubview:playback];
 
-  controls.translatesAutoresizingMaskIntoConstraints = NO;
-  [_window.contentView addSubview:controls];
+  NSStackView *root = [NSStackView stackViewWithViews:@[title, subtitle, tabs, playback]];
+  root.orientation = NSUserInterfaceLayoutOrientationVertical;
+  root.alignment = NSLayoutAttributeLeading;
+  root.spacing = 8.0;
+  root.translatesAutoresizingMaskIntoConstraints = NO;
+  [_window.contentView addSubview:root];
   [NSLayoutConstraint activateConstraints:@[
-      [controls.leadingAnchor constraintEqualToAnchor:_window.contentView.leadingAnchor
-                                             constant:20.0],
-      [controls.topAnchor constraintEqualToAnchor:_window.contentView.topAnchor
-                                          constant:18.0]
+      [root.leadingAnchor constraintEqualToAnchor:_window.contentView.leadingAnchor
+                                          constant:20.0],
+      [root.topAnchor constraintEqualToAnchor:_window.contentView.topAnchor
+                                      constant:16.0]
   ]];
 
   OSStatus status = [self setupAudio];

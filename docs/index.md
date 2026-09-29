@@ -308,24 +308,22 @@ shared reverb, before rear filtering and distance gain. Larger or faster
 drops still send more because their source amplitudes are greater.
 `reverb_gain` controls the return, with a default of 0.12.
 
-The reverb is a four-line feedback delay network. Its line lengths are
-1493, 1601, 1747, and 1867 samples. A normalized Hadamard matrix mixes the
-returns:
-
-    H = 0.5 × [[1, 1, 1, 1], [1, -1, 1, -1],
-               [1, 1, -1, -1], [1, -1, -1, 1]]
+The reverb is a six-line feedback delay network. Its line lengths are 739,
+953, 1151, 1327, 1471, and 1663 samples. A normalized symmetric conference
+matrix mixes every line into the other five without direct self-feedback.
+The matrix is orthogonal, so the scattering stage preserves energy.
 
 For each line, its delayed value passes through a one-pole low-pass with
-alpha 0.35. The next line input is half the mono send plus the matrix
-output multiplied by
+alpha 0.16. Each line then applies
 
-    feedback_i = 0.001^(line_length_i / (0.8 × sample_rate))
+    feedback_i = 0.001^(line_length_i / (0.65 × sample_rate))
 
-The matrix preserves energy, all feedback gains are below one, and the
-low-pass has no gain above one. The network therefore decays without
-input. The 0.8 s parameter is a nominal low-frequency decay target;
-high frequencies decay faster. Left and right returns use different
-signed combinations of the delayed signals.
+All feedback gains are below one and the low-pass has no gain above one, so
+the network decays without input. The 0.65 s parameter is a nominal
+low-frequency decay target; high frequencies decay faster. Six staggered
+delays and full cross-line scattering create a denser tail than the previous
+four-line network. Left and right returns use orthogonal circular projections
+of the delayed signals.
 
 Constant send with falling direct gain makes distant drops relatively
 wetter. This is a useful diffuse-field approximation, not an outdoor

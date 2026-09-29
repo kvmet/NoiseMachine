@@ -56,11 +56,12 @@ make -C host gui
 ./host/noise_gui
 ```
 
-Press **Start** for continuous playback. The sliders control each ambient
-layer, rain intensity and gain, drop rate, reverb, spatial effects, stereo
-width, and master gain. Changes apply while audio plays. Head, width, and
-surface changes affect new rain drops; existing drop tails finish with their
-original spatial settings.
+Press **Start** for continuous playback. The Mixer, Rain, and Spatial tabs
+expose every field in `noise_config`. Type an exact value or use a slider;
+wide physical ranges use logarithmic sliders. Changes apply while audio plays.
+Distance, head, width, and surface changes affect new rain drops; existing drop
+tails finish with their original spatial settings. Changing the seed and
+resetting the generator clears all current audio state.
 
 ## Host controls
 

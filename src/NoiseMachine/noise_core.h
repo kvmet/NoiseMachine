@@ -11,7 +11,8 @@ extern "C" {
 #define NOISE_SAMPLE_RATE_HZ 44100u
 #define NOISE_CHANNELS 2u
 #define NOISE_MAX_DROPLETS 128u
-#define NOISE_REVERB_SAMPLES 6708u
+#define NOISE_REVERB_LINES 6u
+#define NOISE_REVERB_SAMPLES 7304u
 #define NOISE_DIRECT_SAMPLES 128u
 
 typedef enum noise_kind {
@@ -126,9 +127,9 @@ typedef struct noise_gen {
   float rain_slew;
   float rain_slew_error;
   float reverb[NOISE_REVERB_SAMPLES];
-  unsigned reverb_position[4];
-  float reverb_damping[4];
-  float reverb_feedback[4];
+  unsigned reverb_position[NOISE_REVERB_LINES];
+  float reverb_damping[NOISE_REVERB_LINES];
+  float reverb_feedback[NOISE_REVERB_LINES];
   float direct[2][NOISE_DIRECT_SAMPLES];
   unsigned direct_position;
 } noise_gen;

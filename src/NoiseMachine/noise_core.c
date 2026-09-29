@@ -8,8 +8,12 @@
 #define NOISE_WATER_DENSITY 1000.0f
 #define NOISE_PRESSURE_PA 101325.0f
 
-static const unsigned reverb_length[4] = {1493, 1601, 1747, 1867};
-static const unsigned reverb_offset[4] = {0, 1493, 3094, 4841};
+static const unsigned reverb_length[NOISE_REVERB_LINES] = {
+  739, 953, 1151, 1327, 1471, 1663
+};
+static const unsigned reverb_offset[NOISE_REVERB_LINES] = {
+  0, 739, 1692, 2843, 4170, 5641
+};
 
 static uint32_t random_u32(uint32_t *state) {
   uint32_t x = *state;
@@ -126,9 +130,9 @@ noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t see
     gen->hum_table[i] = (sinf(phase) + 0.3f * sinf(2.0f * phase) +
                          0.12f * sinf(3.0f * phase)) / 1.42f;
   }
-  for (unsigned i = 0; i < 4; ++i) {
+  for (unsigned i = 0; i < NOISE_REVERB_LINES; ++i) {
     gen->reverb_feedback[i] = powf(0.001f,
-        (float)reverb_length[i] / (0.8f * NOISE_SAMPLE_RATE_HZ));
+        (float)reverb_length[i] / (0.65f * NOISE_SAMPLE_RATE_HZ));
   }
   return NOISE_OK;
 }
@@ -355,25 +359,32 @@ static float ambient_next(noise_gen *gen) {
 }
 
 static void reverb_next(noise_gen *gen, float send, float *left, float *right) {
-  float delay[4];
-  for (unsigned i = 0; i < 4; ++i) {
+  float delay[NOISE_REVERB_LINES];
+  for (unsigned i = 0; i < NOISE_REVERB_LINES; ++i) {
     float value = gen->reverb[reverb_offset[i] + gen->reverb_position[i]];
-    gen->reverb_damping[i] += 0.35f * (value - gen->reverb_damping[i]);
+    gen->reverb_damping[i] += 0.16f * (value - gen->reverb_damping[i]);
     delay[i] = gen->reverb_damping[i];
   }
-  float feedback[4] = {
-    delay[0] + delay[1] + delay[2] + delay[3],
-    delay[0] - delay[1] + delay[2] - delay[3],
-    delay[0] + delay[1] - delay[2] - delay[3],
-    delay[0] - delay[1] - delay[2] + delay[3]
+  const float scatter = 0.447213595f;
+  float feedback[NOISE_REVERB_LINES] = {
+    scatter * (delay[1] + delay[2] + delay[3] + delay[4] + delay[5]),
+    scatter * (delay[0] + delay[2] - delay[3] - delay[4] + delay[5]),
+    scatter * (delay[0] + delay[1] + delay[3] - delay[4] - delay[5]),
+    scatter * (delay[0] - delay[1] + delay[2] + delay[4] - delay[5]),
+    scatter * (delay[0] - delay[1] - delay[2] + delay[3] + delay[5]),
+    scatter * (delay[0] + delay[1] - delay[2] - delay[3] + delay[4])
   };
-  for (unsigned i = 0; i < 4; ++i) {
+  for (unsigned i = 0; i < NOISE_REVERB_LINES; ++i) {
     gen->reverb[reverb_offset[i] + gen->reverb_position[i]] =
-        0.5f * send + 0.5f * gen->reverb_feedback[i] * feedback[i];
+        0.408248290f * send + gen->reverb_feedback[i] * feedback[i];
     if (++gen->reverb_position[i] == reverb_length[i]) gen->reverb_position[i] = 0;
   }
-  *left += 0.5f * gen->config.reverb_gain * (delay[0] + delay[1] - delay[2] - delay[3]);
-  *right += 0.5f * gen->config.reverb_gain * (delay[0] - delay[1] - delay[2] + delay[3]);
+  float wet = gen->config.reverb_gain;
+  *left += wet * (0.577350269f * delay[0] + 0.288675135f * delay[1] -
+                  0.288675135f * delay[2] - 0.577350269f * delay[3] -
+                  0.288675135f * delay[4] + 0.288675135f * delay[5]);
+  *right += wet * (0.5f * delay[1] + 0.5f * delay[2] -
+                   0.5f * delay[4] - 0.5f * delay[5]);
 }
 
 static int16_t to_sample(noise_gen *gen, float value) {
