@@ -7,9 +7,11 @@
 #include "noise_weather.h"
 
 #define NOISE_MAX_DROPLETS 128u
+#define NOISE_MAX_SURFACES 9u
+#define NOISE_SURFACE_NAME_SIZE 16u
 
-/* Parameter sets for noise_surface_preset. The default config holds preset i in slot i. */
-typedef enum surface_preset {
+/* Positions in the surface list from noise_rain_config_default. */
+typedef enum default_surface {
   WATER = 0,
   DIRT,
   LEAF,
@@ -18,12 +20,11 @@ typedef enum surface_preset {
   METAL,
   PLASTIC,
   ASPHALT,
-  ASPHALT_ROOF,
-  NOISE_SURFACE_PRESET_COUNT
-} surface_preset;
+  ASPHALT_ROOF
+} default_surface;
 
 typedef struct droplet {
-  unsigned surface; /* Slot in noise_rain_config.surface. */
+  unsigned surface; /* Index below noise_rain_config.surface_count. */
   float radius_m;
   float velocity_m_s;
   float bubble_radius_m; /* Zero disables the bubble. */
@@ -40,7 +41,9 @@ typedef struct noise_surface_mode {
 /* Everything that shapes the sound of one drop on a surface. Each min/max pair is
    sampled per drop; equal bounds use the value without a random draw. */
 typedef struct noise_surface {
+  char name[NOISE_SURFACE_NAME_SIZE]; /* NUL-terminated. */
   float weight; /* Relative share of automatic arrivals. */
+  float weight_mod; /* Bipolar weather depth on weight, -1..1. */
   float click_gain_min; /* Relative to the drop amplitude. */
   float click_gain_max;
   float click_frequency_min_hz;
@@ -65,7 +68,8 @@ typedef struct noise_rain_config {
   float min_distance_m;
   float max_distance_m;
   float fall_height_m;
-  noise_surface surface[NOISE_SURFACE_SLOTS]; /* At least one weight above zero. */
+  unsigned surface_count; /* 1..NOISE_MAX_SURFACES. */
+  noise_surface surface[NOISE_MAX_SURFACES]; /* Used weights sum above zero; later entries are ignored. */
 } noise_rain_config;
 
 /* Mode slots in each drop voice. */
@@ -87,7 +91,7 @@ typedef struct noise_drop_voice {
 typedef struct noise_rain {
   uint32_t arrival_rng;
   uint32_t drop_rng;
-  float surface_cdf[NOISE_SURFACE_SLOTS];
+  float surface_cdf[NOISE_MAX_SURFACES];
   noise_drop_voice voice[NOISE_MAX_DROPLETS];
 } noise_rain;
 
@@ -95,13 +99,11 @@ typedef struct noise_rain {
 extern "C" {
 #endif
 
-/* Fills every field except weight. */
-void noise_surface_preset(noise_surface *surface, surface_preset preset);
 int noise_rain_config_valid(const noise_rain_config *c);
 void noise_rain_config_default(noise_rain_config *c);
 void noise_rain_init(noise_rain *rain, uint32_t seed);
 void noise_rain_configure(noise_rain *rain, const noise_rain_config *c);
-int noise_drop_valid(const droplet *drop);
+int noise_drop_valid(const noise_rain_config *c, const droplet *drop);
 noise_result noise_rain_start_drop(noise_rain *rain, noise_state *state, const noise_rain_config *c,
                                const noise_listener_config *listener, const droplet *drop);
 /* Returns the reverb send; the direct sound goes to the bus. */

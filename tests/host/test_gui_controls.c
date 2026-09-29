@@ -28,9 +28,9 @@ static void test_startup_valid(void) {
   noise_config c;
   gui_startup_config(&c);
   assert(noise_config_valid(&c));
-  for (unsigned slot = 0; slot < NOISE_SURFACE_SLOTS; ++slot) {
+  for (unsigned surface = 0; surface < c.rain.surface_count; ++surface) {
     for (gui_control_id id = 0; id < CONTROL_COUNT; ++id) {
-      float value = gui_control_get(&c, slot, id);
+      float value = gui_control_get(&c, surface, id);
       assert(value >= gui_controls[id].minimum && value <= gui_controls[id].maximum);
     }
   }
@@ -46,15 +46,15 @@ static void test_every_edit_stays_valid(void) {
     gui_set_vary(&c, vary);
     assert(noise_config_valid(&c));
     for (size_t f = 0; f < sizeof(fractions) / sizeof(fractions[0]); ++f) {
-      for (unsigned slot = 0; slot < NOISE_SURFACE_SLOTS; ++slot) {
+      for (unsigned surface = 0; surface < c.rain.surface_count; ++surface) {
         for (gui_control_id id = 0; id < CONTROL_COUNT; ++id) {
           const gui_control *control = &gui_controls[id];
           float value = control->minimum + fractions[f] * (control->maximum - control->minimum);
-          gui_control_set(&c, slot, id, value);
+          gui_control_set(&c, surface, id, value);
           assert(noise_config_valid(&c));
-          gui_control_set(&c, slot, id, -INFINITY);
+          gui_control_set(&c, surface, id, -INFINITY);
           assert(noise_config_valid(&c));
-          gui_control_set(&c, slot, id, INFINITY);
+          gui_control_set(&c, surface, id, INFINITY);
           assert(noise_config_valid(&c));
         }
       }
@@ -79,12 +79,12 @@ static void test_follow_rules(void) {
   gui_set_vary(&c, 1);
   assert(c.weather.intensity == c.weather.min_intensity);
 
-  for (unsigned surface = 0; surface < NOISE_SURFACE_SLOTS - 1; ++surface) {
-    assert(gui_control_set(&c, 0, CONTROL_SURFACE_WEIGHT + surface, 0.0f) == NULL);
+  unsigned last = c.rain.surface_count - 1;
+  for (unsigned surface = 0; surface < last; ++surface) {
+    assert(gui_control_set(&c, surface, CONTROL_SURFACE_WEIGHT, 0.0f) == NULL);
   }
-  gui_control_id last = CONTROL_SURFACE_WEIGHT + NOISE_SURFACE_SLOTS - 1;
-  assert(gui_control_set(&c, 0, last, 0.0f) != NULL);
-  assert(gui_control_get(&c, 0, last) > 0.0f);
+  assert(gui_control_set(&c, last, CONTROL_SURFACE_WEIGHT, 0.0f) != NULL);
+  assert(gui_control_get(&c, last, CONTROL_SURFACE_WEIGHT) > 0.0f);
 
   gui_control_set(&c, 4, CONTROL_CLICK_FREQUENCY_MAX, 500.0f);
   assert(c.rain.surface[4].click_frequency_min_hz == 500.0f);
@@ -109,11 +109,10 @@ static void test_slider_round_trip(void) {
       assert(close_to(gui_slider_value(id, position), value));
     }
   }
-  gui_control_id weight = CONTROL_SURFACE_WEIGHT + WATER;
   double low, high;
-  gui_slider_range(weight, &low, &high);
-  assert(gui_slider_value(weight, low) == 0.0f);
-  assert(gui_slider_position(weight, 0.0f) == low);
+  gui_slider_range(CONTROL_SURFACE_WEIGHT, &low, &high);
+  assert(gui_slider_value(CONTROL_SURFACE_WEIGHT, low) == 0.0f);
+  assert(gui_slider_position(CONTROL_SURFACE_WEIGHT, 0.0f) == low);
   gui_slider_range(CONTROL_LOWPASS, &low, &high);
   assert(gui_slider_value(CONTROL_LOWPASS, low) == 0.0f);
   assert(gui_slider_position(CONTROL_LOWPASS, 0.0f) == low);
@@ -126,7 +125,7 @@ static void test_text(void) {
   float value = 0.0f;
   assert(gui_control_parse(CONTROL_BUBBLE_RADIUS_MIN, "0.5", &value));
   assert(close_to(value, 0.0005f));
-  gui_control_format(CONTROL_SURFACE_WEIGHT + WATER, 6.05624e-05f, text, sizeof(text));
+  gui_control_format(CONTROL_SURFACE_WEIGHT, 6.05624e-05f, text, sizeof(text));
   assert(strcmp(text, "6.05624e-05") == 0);
   static const char *invalid[] = {"", "abc", "1x", "nan", "inf", "1e999", " "};
   for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
@@ -136,6 +135,70 @@ static void test_text(void) {
   }
 }
 
+static void test_surface_add(void) {
+  noise_config c;
+  gui_startup_config(&c);
+  noise_config full = c;
+  assert(gui_surface_add(&c, WATER) != NULL);
+  assert(memcmp(&c, &full, sizeof(c)) == 0);
+
+  assert(gui_surface_delete(&c, METAL) == NULL);
+  assert(c.rain.surface_count == NOISE_MAX_SURFACES - 1);
+  assert(strcmp(c.rain.surface[METAL].name, "Plastic") == 0);
+  assert(gui_surface_add(&c, WATER) == NULL);
+  noise_surface *added = &c.rain.surface[NOISE_MAX_SURFACES - 1];
+  assert(strcmp(added->name, "Water copy") == 0);
+  assert(added->weight == 0.0f && added->weight_mod == 0.0f);
+  noise_surface expected = c.rain.surface[WATER];
+  expected.weight = 0.0f;
+  memcpy(expected.name, added->name, sizeof(expected.name));
+  assert(memcmp(added, &expected, sizeof(expected)) == 0);
+  assert(noise_config_valid(&c));
+
+  gui_surface_delete(&c, 0);
+  unsigned roof = ASPHALT_ROOF - 2;
+  assert(strcmp(c.rain.surface[roof].name, "Asphalt roof") == 0);
+  assert(gui_surface_add(&c, roof) == NULL);
+  assert(strcmp(c.rain.surface[NOISE_MAX_SURFACES - 1].name, "Asphalt roof co") == 0);
+  assert(noise_config_valid(&c));
+}
+
+static void test_surface_delete(void) {
+  noise_config c;
+  gui_startup_config(&c);
+  while (c.rain.surface_count > 1) {
+    assert(gui_surface_delete(&c, 0) == NULL || c.rain.surface[0].weight > 0.0f);
+    assert(noise_config_valid(&c));
+  }
+  assert(strcmp(c.rain.surface[0].name, "Asphalt roof") == 0);
+  noise_config single = c;
+  assert(gui_surface_delete(&c, 0) != NULL);
+  assert(memcmp(&c, &single, sizeof(c)) == 0);
+
+  gui_startup_config(&c);
+  for (unsigned i = 0; i < c.rain.surface_count; ++i) c.rain.surface[i].weight = 0.0f;
+  c.rain.surface[DIRT].weight = 1.0f;
+  assert(gui_surface_delete(&c, DIRT) != NULL);
+  assert(c.rain.surface[0].weight > 0.0f);
+  assert(noise_config_valid(&c));
+}
+
+static void test_surface_rename(void) {
+  noise_config c;
+  gui_startup_config(&c);
+  assert(gui_surface_rename(&c, METAL, "") != NULL);
+  assert(strcmp(c.rain.surface[METAL].name, "Metal") == 0);
+  assert(gui_surface_rename(&c, METAL, "Tin roof") == NULL);
+  assert(strcmp(c.rain.surface[METAL].name, "Tin roof") == 0);
+  assert(gui_surface_rename(&c, METAL, "abcdefghijklmno") == NULL);
+  assert(gui_surface_rename(&c, METAL, "abcdefghijklmnop") != NULL);
+  assert(strcmp(c.rain.surface[METAL].name, "abcdefghijklmno") == 0);
+  /* A two-byte character that would straddle the limit is dropped whole. */
+  assert(gui_surface_rename(&c, METAL, "aaaaaaaaaaaaaa\xc3\xa9") != NULL);
+  assert(strcmp(c.rain.surface[METAL].name, "aaaaaaaaaaaaaa") == 0);
+  assert(noise_config_valid(&c));
+}
+
 void run_gui_controls_tests(void) {
   test_table_complete();
   test_startup_valid();
@@ -143,4 +206,7 @@ void run_gui_controls_tests(void) {
   test_follow_rules();
   test_slider_round_trip();
   test_text();
+  test_surface_add();
+  test_surface_delete();
+  test_surface_rename();
 }

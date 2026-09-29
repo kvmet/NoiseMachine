@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <math.h>
@@ -66,6 +67,16 @@ static int parse_number(const char *text, double *value) {
   return text[0] && end != text && !*end && errno != ERANGE && isfinite(*value);
 }
 
+/* Case-insensitive; a hyphen in the argument matches a space in the name. */
+static int surface_name_matches(const char *name, const char *arg) {
+  for (;; ++name, ++arg) {
+    int n = tolower((unsigned char)*name);
+    int a = *arg == '-' ? ' ' : tolower((unsigned char)*arg);
+    if (n != a) return 0;
+    if (!n) return 1;
+  }
+}
+
 int main(int argc, char **argv) {
   noise_config config;
   noise_config_default(&config);
@@ -124,26 +135,24 @@ int main(int argc, char **argv) {
         config.ambient_gain[kind] = 0.3f;
       }
     } else if (strcmp(arg, "-m") == 0) {
-      static const char *names[] = {
-        "water", "dirt", "leaf", "concrete", "glass", "metal", "plastic", "asphalt",
-        "asphalt-roof"
-      };
-      /* The default config holds preset i in slot i, so a preset selects its slot. */
       if (strcmp(value, "mixed") == 0) {
         noise_config defaults;
         noise_config_default(&defaults);
-        for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) {
+        for (unsigned i = 0; i < config.rain.surface_count; ++i) {
           config.rain.surface[i].weight = defaults.rain.surface[i].weight;
         }
       } else {
-        unsigned preset = 0;
-        while (preset < NOISE_SURFACE_PRESET_COUNT && strcmp(value, names[preset])) ++preset;
-        if (preset == NOISE_SURFACE_PRESET_COUNT) {
+        unsigned match = 0;
+        while (match < config.rain.surface_count &&
+               !surface_name_matches(config.rain.surface[match].name, value)) {
+          ++match;
+        }
+        if (match == config.rain.surface_count) {
           fprintf(stderr, "unknown surface: %s\n", value);
           return 1;
         }
-        for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) {
-          config.rain.surface[i].weight = i == preset ? 1.0f : 0.0f;
+        for (unsigned i = 0; i < config.rain.surface_count; ++i) {
+          config.rain.surface[i].weight = i == match ? 1.0f : 0.0f;
         }
       }
     } else if (strcmp(arg, "-c") == 0) {

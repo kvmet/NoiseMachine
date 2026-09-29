@@ -139,14 +139,84 @@ static void test_roof_surfaces(void) {
   assert(b.rain.voice[0].material_lowpass_alpha > 0.0f);
 }
 
-static void test_surface_presets(void) {
+static void test_surface_list(void) {
+  static const char *names[] = {
+    [WATER] = "Water", [DIRT] = "Dirt", [LEAF] = "Leaf", [CONCRETE] = "Concrete",
+    [GLASS] = "Glass", [METAL] = "Metal", [PLASTIC] = "Plastic", [ASPHALT] = "Asphalt",
+    [ASPHALT_ROOF] = "Asphalt roof"};
   noise_config c = silent_config();
-  for (unsigned preset = 0; preset < NOISE_SURFACE_PRESET_COUNT; ++preset) {
-    c.rain.surface[0].weight = 0.7f;
-    noise_surface_preset(&c.rain.surface[0], (surface_preset)preset);
-    assert(c.rain.surface[0].weight == 0.7f);
-    assert(noise_config_valid(&c));
+  assert(c.rain.surface_count == NOISE_MAX_SURFACES);
+  for (unsigned i = 0; i < NOISE_MAX_SURFACES; ++i) {
+    assert(strcmp(c.rain.surface[i].name, names[i]) == 0);
   }
+  c.rain.surface_count = 0;
+  assert(!noise_config_valid(&c));
+  c.rain.surface_count = NOISE_MAX_SURFACES + 1;
+  assert(!noise_config_valid(&c));
+  c = silent_config();
+  memset(c.rain.surface[METAL].name, 'x', sizeof(c.rain.surface[METAL].name));
+  assert(!noise_config_valid(&c));
+  c = silent_config();
+  c.rain.surface[METAL].weight_mod = 1.5f;
+  assert(!noise_config_valid(&c));
+
+  /* Entries past the count are neither validated nor chosen. */
+  noise_config short_list = silent_config();
+  short_list.weather.intensity = 1.0f;
+  short_list.rain.max_drops_per_s = 2000.0f;
+  short_list.rain.surface_count = 1;
+  for (unsigned i = 1; i < NOISE_MAX_SURFACES; ++i) short_list.rain.surface[i].weight = 5.0f;
+  short_list.rain.surface[DIRT].weight_mod = 1.0f;
+  short_list.rain.surface[LEAF].lowpass_hz = NAN;
+  noise_config water_only = short_list;
+  water_only.rain.surface_count = NOISE_MAX_SURFACES;
+  for (unsigned i = 1; i < NOISE_MAX_SURFACES; ++i) {
+    water_only.rain.surface[i] = water_only.rain.surface[WATER];
+    water_only.rain.surface[i].weight = 0.0f;
+  }
+  static int16_t reference[2 * NOISE_SAMPLE_RATE_HZ];
+  assert(noise_init(&a, &short_list, 17) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  assert(noise_init(&b, &water_only, 17) == NOISE_OK);
+  noise_fill(&b, reference, NOISE_SAMPLE_RATE_HZ);
+  assert(a.state.generated_drops > 1000);
+  assert(memcmp(audio, reference, sizeof(audio)) == 0);
+
+  droplet drop = water_drop();
+  drop.surface = 1;
+  assert(noise_trigger_drop(&a, &drop) == NOISE_INVALID_DROP);
+  drop.surface = 0;
+  assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
+}
+
+/* Share of voice-samples on unfiltered surface 0 against its filtered copy, surface 1. */
+static double unfiltered_share(float weight_mod) {
+  noise_config c = silent_config();
+  c.weather.intensity = 1.0f;
+  c.rain.max_drops_per_s = 2000.0f;
+  c.rain.surface_count = 2;
+  c.rain.surface[1] = c.rain.surface[WATER];
+  c.rain.surface[1].lowpass_hz = 20000.0f;
+  c.rain.surface[WATER].weight_mod = weight_mod;
+  assert(noise_init(&a, &c, 23) == NOISE_OK);
+  unsigned long unfiltered = 0, total = 0;
+  int16_t frame[2];
+  for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) {
+    noise_fill(&a, frame, 1);
+    for (unsigned v = 0; v < a.state.active_drops; ++v) {
+      unfiltered += a.rain.voice[v].material_lowpass_alpha == 1.0f;
+      ++total;
+    }
+  }
+  assert(total > 10000);
+  return (double)unfiltered / (double)total;
+}
+
+static void test_surface_weight_mod(void) {
+  /* At full intensity the scale is 1 + weight_mod, floored at 0.001. */
+  assert(fabs(unfiltered_share(0.0f) - 0.5) < 0.1);
+  assert(fabs(unfiltered_share(1.0f) - 2.0 / 3.0) < 0.1);
+  assert(unfiltered_share(-1.0f) < 0.01);
 }
 
 static void test_bubble_on_solid(void) {
@@ -222,7 +292,8 @@ void run_rain_tests(void) {
   test_water_controls();
   test_automatic_water_bubbles();
   test_roof_surfaces();
-  test_surface_presets();
+  test_surface_list();
+  test_surface_weight_mod();
   test_bubble_on_solid();
   test_custom_click();
   test_lifetimes_and_capacity();

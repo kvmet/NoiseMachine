@@ -16,7 +16,7 @@ renderer and an Arduino sketch for eventual ESP32 audio output.
   off fixed terrain and its own reverb.
 
 The [model documentation](docs/index.md) gives the equations, units,
-assumptions, material presets, API contract, and cited references.
+assumptions, default surfaces, API contract, and cited references.
 Frogs are deferred.
 
 ## Build and listen
@@ -72,11 +72,12 @@ Rain, Impact, Bubbles, Weather Mod, and Spatial tabs expose every field in
 the distance range. **Export…** renders the current settings to an AAC `.m4a`
 file of a chosen length.
 Wind has gain, brightness, gust depth, gust rate, and stereo width controls.
-Crickets and cicadas have separate activity, pitch, texture, and stereo controls. The Rain tab sets each of the nine
-surface slots from a preset and sets its share of arrivals. Impact and Bubbles edit
-every modeling parameter of the selected slot, so presets are starting points. Weather Mod
-routes intensity to density, size, gain, reverb, physical, and surface
-parameters with bipolar attenuverters. Type an exact value or use a slider;
+Crickets and cicadas have separate activity, pitch, texture, and stereo controls. Rain uses a list of up to nine named
+surfaces. On the Rain tab, pick a surface to rename it, set its share of arrivals and
+its weather mod, or delete it. **Add** appends a copy of the selected surface. Impact
+and Bubbles edit every modeling parameter of the selected surface. Weather Mod
+routes intensity to density, size, gain, reverb, and physical parameters with bipolar
+attenuverters. Type an exact value or use a slider;
 wide physical ranges use logarithmic sliders. Changes apply while audio plays.
 Distance, head, width, and surface changes affect new rain drops; existing drop
 tails finish with their original spatial settings. Changing the seed and
@@ -96,7 +97,8 @@ Run `./host/noise_host -h` for usage.
 - `-l NUMBER`, `-u NUMBER`: lower and upper varying-intensity bounds.
   Defaults: 0.15 and 0.85. An explicit initial intensity must be within them.
 - `-m mixed|water|dirt|leaf|concrete|glass|metal|plastic|asphalt|asphalt-roof`:
-  rain material. Default: mixed. The mix is 37% water, 21% dirt, 26% leaves,
+  rain surface, matched against the default surface names ignoring case, with a
+  hyphen for a space. Default: mixed. The mix is 37% water, 21% dirt, 26% leaves,
   15% concrete, and 0.5% each glass and metal. Plastic, asphalt, and roof
   weights default to zero.
 - `-n NUMBER`: arrival rate at intensity one, from 0 to 2000/s. Default: 900.
@@ -138,9 +140,9 @@ if (noise_init(&generator, &config, 1) != NOISE_OK) {
 noise_fill(&generator, frames, 256);
 ```
 
-Configuration also exposes individual layer gains, nine surface slots, source
+Configuration also exposes individual layer gains, up to nine named surfaces, source
 distance bounds, falling height, weather interval, and smoothing time.
-`noise_trigger_drop` accepts an individual drop with radius, speed, surface slot,
+`noise_trigger_drop` accepts an individual drop with radius, speed, surface index,
 bubble radius, and polar position. `noise_trigger_thunder` accepts a strike
 distance and angle. See [the API and limits](docs/index.md#api-and-limits).
 

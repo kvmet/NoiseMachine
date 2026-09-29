@@ -51,9 +51,10 @@ typedef enum gui_control_id {
   CONTROL_FALL_HEIGHT,
   CONTROL_RAIN_MIN_DISTANCE,
   CONTROL_RAIN_MAX_DISTANCE,
+  /* Fields of the selected surface. */
   CONTROL_SURFACE_WEIGHT,
-  /* Fields of the selected surface slot. */
-  CONTROL_CLICK_GAIN_MIN = CONTROL_SURFACE_WEIGHT + NOISE_SURFACE_SLOTS,
+  CONTROL_SURFACE_WEIGHT_MOD,
+  CONTROL_CLICK_GAIN_MIN,
   CONTROL_CLICK_GAIN_MAX,
   CONTROL_CLICK_FREQUENCY_MIN,
   CONTROL_CLICK_FREQUENCY_MAX,
@@ -86,7 +87,7 @@ typedef enum gui_scale {
 
 typedef enum gui_scope {
   GUI_SCOPE_CONFIG,  /* offset is into noise_config. */
-  GUI_SCOPE_SURFACE  /* offset is into the selected slot's noise_surface. */
+  GUI_SCOPE_SURFACE  /* offset is into the selected noise_surface. */
 } gui_scope;
 
 typedef struct gui_control {
@@ -106,13 +107,21 @@ extern const gui_control gui_controls[CONTROL_COUNT];
 /* Listening settings the GUI opens with; the engine keeps its own defaults. */
 void gui_startup_config(noise_config *config);
 
-/* slot selects the surface for GUI_SCOPE_SURFACE controls; others ignore it. */
-float gui_control_get(const noise_config *config, unsigned slot, gui_control_id id);
+/* surface selects the entry for GUI_SCOPE_SURFACE controls; others ignore it. */
+float gui_control_get(const noise_config *config, unsigned surface, gui_control_id id);
 /* Clamps value to the control's range, stores it, and moves any field that must
    follow so a valid config stays valid. Returns a note for the user when the
    stored value differs from the clamped request, or NULL. */
-const char *gui_control_set(noise_config *config, unsigned slot, gui_control_id id,
+const char *gui_control_set(noise_config *config, unsigned surface, gui_control_id id,
                             float value);
+/* Surface list edits. Each keeps a valid config valid and returns a note for the
+   user when it changes less than asked, or NULL. */
+/* Appends a copy of surface from with weight and weight_mod zero. */
+const char *gui_surface_add(noise_config *config, unsigned from);
+/* Removes surface and shifts later ones down. */
+const char *gui_surface_delete(noise_config *config, unsigned surface);
+/* Stores name, shortened at a UTF-8 character boundary to fit. */
+const char *gui_surface_rename(noise_config *config, unsigned surface, const char *name);
 /* Turns weather variation on or off, clamping intensity into its bounds. */
 void gui_set_vary(noise_config *config, int vary);
 

@@ -74,7 +74,7 @@ noise_result noise_set_config(noise_gen *gen, const noise_config *config) {
 }
 
 noise_result noise_trigger_drop(noise_gen *gen, const droplet *drop) {
-  if (!gen || !drop || !noise_drop_valid(drop)) return NOISE_INVALID_DROP;
+  if (!gen || !drop || !noise_drop_valid(&gen->config.rain, drop)) return NOISE_INVALID_DROP;
   return noise_rain_start_drop(&gen->rain, &gen->state, &gen->config.rain,
                                &gen->config.listener, drop);
 }

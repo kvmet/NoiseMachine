@@ -5,7 +5,6 @@
 
 #define NOISE_SAMPLE_RATE_HZ 44100u
 #define NOISE_CHANNELS 2u
-#define NOISE_SURFACE_SLOTS 9u
 
 typedef enum noise_result {
   NOISE_OK = 0,

@@ -22,16 +22,13 @@
   NSSlider *_sliders[CONTROL_COUNT];
   NSTextField *_valueFields[CONTROL_COUNT];
   noise_config _config; /* The settings shown; published whole to _output on each edit. */
-  unsigned _slot;       /* Surface slot shown by GUI_SCOPE_SURFACE controls. */
-  NSMutableArray<NSSegmentedControl *> *_slotPickers;
+  unsigned _surface;    /* Surface shown by GUI_SCOPE_SURFACE controls. */
+  NSMutableArray<NSPopUpButton *> *_surfacePickers;
+  NSTextField *_nameField;
+  NSButton *_addButton;
+  NSButton *_deleteButton;
   audio_output *_output;
   BOOL _playing;
-}
-
-/* In surface_preset order. */
-static NSArray<NSString *> *preset_names(void) {
-  return @[@"Water", @"Dirt", @"Leaf", @"Concrete", @"Glass", @"Metal", @"Plastic",
-           @"Asphalt", @"Asphalt roof"];
 }
 
 - (void)publishConfig {
@@ -43,12 +40,12 @@ static NSArray<NSString *> *preset_names(void) {
 
 - (NSString *)formattedControl:(gui_control_id)control {
   char text[32];
-  gui_control_format(control, gui_control_get(&_config, _slot, control), text, sizeof(text));
+  gui_control_format(control, gui_control_get(&_config, _surface, control), text, sizeof(text));
   return @(text);
 }
 
 - (void)showControl:(gui_control_id)control {
-  float value = gui_control_get(&_config, _slot, control);
+  float value = gui_control_get(&_config, _surface, control);
   _sliders[control].doubleValue = gui_slider_position(control, value);
   _valueFields[control].stringValue = [self formattedControl:control];
 }
@@ -58,7 +55,7 @@ static NSArray<NSString *> *preset_names(void) {
 - (void)showChangesFrom:(const noise_config *)previous edited:(gui_control_id)edited {
   for (gui_control_id control = 0; control < CONTROL_COUNT; ++control) {
     if (control == edited ||
-        gui_control_get(previous, _slot, control) != gui_control_get(&_config, _slot, control)) {
+        gui_control_get(previous, _surface, control) != gui_control_get(&_config, _surface, control)) {
       [self showControl:control];
     }
   }
@@ -72,9 +69,10 @@ static NSArray<NSString *> *preset_names(void) {
 
 - (void)setControl:(gui_control_id)control value:(float)value {
   noise_config previous = _config;
-  const char *note = gui_control_set(&_config, _slot, control, value);
+  const char *note = gui_control_set(&_config, _surface, control, value);
   if (note) _statusLabel.stringValue = @(note);
   [self showChangesFrom:&previous edited:control];
+  if (control == CONTROL_SURFACE_WEIGHT) [self showSurfaceList];
   [self publishConfig];
 }
 
@@ -158,16 +156,67 @@ static NSArray<NSString *> *preset_names(void) {
   if (field.tag >= 0 && field.tag < CONTROL_COUNT) [self valueFieldChanged:field];
 }
 
-- (void)slotChanged:(NSSegmentedControl *)sender {
-  _slot = (unsigned)sender.selectedSegment;
-  for (NSSegmentedControl *picker in _slotPickers) picker.selectedSegment = _slot;
+/* Pickers list each surface with its share of arrivals; duplicate names stay distinct. */
+- (void)showSurfaceList {
+  const noise_rain_config *rain = &_config.rain;
+  float total = 0.0f;
+  for (unsigned i = 0; i < rain->surface_count; ++i) total += rain->surface[i].weight;
+  for (NSPopUpButton *picker in _surfacePickers) {
+    [picker.menu removeAllItems];
+    for (unsigned i = 0; i < rain->surface_count; ++i) {
+      NSString *title = [NSString stringWithFormat:@"%s (%.3g%%)", rain->surface[i].name,
+                         100.0 * rain->surface[i].weight / total];
+      [picker.menu addItemWithTitle:title action:NULL keyEquivalent:@""];
+    }
+    [picker selectItemAtIndex:_surface];
+  }
+  _nameField.stringValue = @(rain->surface[_surface].name);
+  _addButton.enabled = rain->surface_count < NOISE_MAX_SURFACES;
+  _deleteButton.enabled = rain->surface_count > 1;
+}
+
+- (void)showSurface {
+  [self showSurfaceList];
   [self showSurfaceControls];
 }
 
-- (void)presetChanged:(NSPopUpButton *)sender {
-  unsigned slot = (unsigned)sender.tag;
-  noise_surface_preset(&_config.rain.surface[slot], (surface_preset)sender.indexOfSelectedItem);
-  if (slot == _slot) [self showSurfaceControls];
+- (void)surfaceChanged:(NSPopUpButton *)sender {
+  _surface = (unsigned)sender.indexOfSelectedItem;
+  [self showSurface];
+}
+
+- (void)addSurface:(NSButton *)sender {
+  (void)sender;
+  const char *note = gui_surface_add(&_config, _surface);
+  if (note) {
+    _statusLabel.stringValue = @(note);
+    return;
+  }
+  _surface = _config.rain.surface_count - 1;
+  _statusLabel.stringValue = [NSString stringWithFormat:@"Added %s",
+                              _config.rain.surface[_surface].name];
+  [self showSurface];
+  [self publishConfig];
+}
+
+- (void)deleteSurface:(NSButton *)sender {
+  (void)sender;
+  NSString *name = @(_config.rain.surface[_surface].name);
+  unsigned count = _config.rain.surface_count;
+  const char *note = gui_surface_delete(&_config, _surface);
+  if (_config.rain.surface_count < count) {
+    _statusLabel.stringValue = [NSString stringWithFormat:@"Deleted %@", name];
+  }
+  if (note) _statusLabel.stringValue = @(note);
+  if (_surface >= _config.rain.surface_count) _surface = _config.rain.surface_count - 1;
+  [self showSurface];
+  [self publishConfig];
+}
+
+- (void)renameSurface:(NSTextField *)sender {
+  const char *note = gui_surface_rename(&_config, _surface, sender.stringValue.UTF8String);
+  if (note) _statusLabel.stringValue = @(note);
+  [self showSurfaceList];
   [self publishConfig];
 }
 
@@ -309,32 +358,33 @@ static NSArray<NSString *> *preset_names(void) {
   return view;
 }
 
-- (NSView *)surfaceRow:(unsigned)slot {
-  NSTextField *label = [self rowLabel:[NSString stringWithFormat:@"Surface %u", slot + 1]
-                                width:70.0];
-  NSPopUpButton *menu = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
-  [menu addItemsWithTitles:preset_names()];
-  [menu selectItemAtIndex:slot];
-  menu.tag = slot;
-  menu.target = self;
-  menu.action = @selector(presetChanged:);
-  [menu.widthAnchor constraintEqualToConstant:130.0].active = YES;
-  NSMutableArray<NSView *> *views = [NSMutableArray arrayWithObjects:label, menu, nil];
-  [views addObjectsFromArray:[self sliderAndField:CONTROL_SURFACE_WEIGHT + slot width:170.0]];
-  return [self rowWithViews:views];
+- (NSPopUpButton *)surfacePicker {
+  NSPopUpButton *picker = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+  picker.target = self;
+  picker.action = @selector(surfaceChanged:);
+  [picker.widthAnchor constraintEqualToConstant:200.0].active = YES;
+  [_surfacePickers addObject:picker];
+  return picker;
 }
 
-- (NSView *)slotPicker {
-  NSMutableArray<NSString *> *labels = [NSMutableArray array];
-  for (unsigned slot = 0; slot < NOISE_SURFACE_SLOTS; ++slot) {
-    [labels addObject:[NSString stringWithFormat:@"%u", slot + 1]];
-  }
-  NSSegmentedControl *picker = [NSSegmentedControl
-      segmentedControlWithLabels:labels trackingMode:NSSegmentSwitchTrackingSelectOne
-                          target:self action:@selector(slotChanged:)];
-  picker.selectedSegment = _slot;
-  [_slotPickers addObject:picker];
-  return [self rowWithViews:@[[self rowLabel:@"Surface" width:145.0], picker]];
+- (NSView *)surfacePickerRow {
+  return [self rowWithViews:@[[self rowLabel:@"Surface" width:145.0], [self surfacePicker]]];
+}
+
+- (NSArray<NSView *> *)surfaceEditorRows {
+  _addButton = [NSButton buttonWithTitle:@"Add" target:self action:@selector(addSurface:)];
+  _deleteButton = [NSButton buttonWithTitle:@"Delete" target:self
+                                     action:@selector(deleteSurface:)];
+  NSView *picker = [self rowWithViews:@[[self rowLabel:@"Surface" width:145.0],
+                                        [self surfacePicker], _addButton, _deleteButton]];
+  _nameField = [[NSTextField alloc] initWithFrame:NSZeroRect];
+  _nameField.target = self;
+  _nameField.action = @selector(renameSurface:);
+  _nameField.cell.sendsActionOnEndEditing = YES;
+  [_nameField.widthAnchor constraintEqualToConstant:200.0].active = YES;
+  NSView *name = [self rowWithViews:@[[self rowLabel:@"Name" width:145.0], _nameField]];
+  return @[picker, name, [self row:CONTROL_SURFACE_WEIGHT],
+           [self row:CONTROL_SURFACE_WEIGHT_MOD]];
 }
 
 - (NSView *)cicadaSpeciesRow {
@@ -402,23 +452,21 @@ static NSArray<NSString *> *preset_names(void) {
   [rainRows addObjectsFromArray:[self rowsFrom:CONTROL_RAIN_INTENSITY count:5]];
   [rainRows addObject:[self row:CONTROL_DROP_RATE]];
   [rainRows addObject:[self row:CONTROL_FALL_HEIGHT]];
-  [rainRows addObject:[self sectionLabel:@"Surfaces: preset and share of arrivals"]];
-  for (unsigned slot = 0; slot < NOISE_SURFACE_SLOTS; ++slot) {
-    [rainRows addObject:[self surfaceRow:slot]];
-  }
+  [rainRows addObject:[self sectionLabel:@"Surfaces"]];
+  _surfacePickers = [NSMutableArray array];
+  [rainRows addObjectsFromArray:[self surfaceEditorRows]];
   [rainRows addObject:[self seedRow]];
   NSView *rain = [self tabViewWithRows:rainRows];
 
-  _slotPickers = [NSMutableArray array];
   NSMutableArray<NSView *> *impactRows = [NSMutableArray arrayWithObjects:
-      [self slotPicker], [self sectionLabel:@"Click"], nil];
+      [self surfacePickerRow], [self sectionLabel:@"Click"], nil];
   [impactRows addObjectsFromArray:[self rowsFrom:CONTROL_CLICK_GAIN_MIN count:5]];
   [impactRows addObject:[self sectionLabel:@"Resonances"]];
   [impactRows addObjectsFromArray:[self rowsFrom:CONTROL_MODE_1_FREQUENCY count:8]];
   NSView *impact = [self tabViewWithRows:impactRows];
 
   NSMutableArray<NSView *> *bubbleRows = [NSMutableArray arrayWithObjects:
-      [self slotPicker], [self sectionLabel:@"Random range per bubble"], nil];
+      [self surfacePickerRow], [self sectionLabel:@"Random range per bubble"], nil];
   [bubbleRows addObjectsFromArray:[self rowsFrom:CONTROL_BUBBLE_PROBABILITY count:8]];
   NSView *bubbles = [self tabViewWithRows:bubbleRows];
 
@@ -426,10 +474,9 @@ static NSArray<NSString *> *preset_names(void) {
       [self sectionLabel:@"Weather intensity attenuverters"],
       [NSTextField labelWithString:@"+ follows intensity     0 disconnects     - inverts"], nil];
   [modRows addObjectsFromArray:[self rowsFrom:CONTROL_WEATHER_MOD
-                                        count:WEATHER_MOD_SURFACE_WEIGHT]];
-  [modRows addObject:[self sectionLabel:@"Surface weights"]];
-  [modRows addObjectsFromArray:[self rowsFrom:CONTROL_WEATHER_MOD + WEATHER_MOD_SURFACE_WEIGHT
-                                        count:NOISE_SURFACE_SLOTS]];
+                                        count:NOISE_WEATHER_MOD_COUNT]];
+  [modRows addObject:[NSTextField labelWithString:
+      @"Each surface's weight weather mod is on the Rain tab."]];
   NSView *weatherMod = [self tabViewWithRows:modRows];
 
   NSView *spatial = [self tabViewWithRows:@[
@@ -472,6 +519,7 @@ static NSArray<NSString *> *preset_names(void) {
       @"All engine parameters. Type exact values or use the sliders."];
   subtitle.textColor = NSColor.secondaryLabelColor;
   NSTabView *tabs = [self tabs];
+  [self showSurfaceList];
 
   _playButton = [NSButton buttonWithTitle:@"Start" target:self
                                    action:@selector(togglePlayback:)];

@@ -11,8 +11,7 @@ typedef enum weather_mod_destination {
   WEATHER_MOD_FALL_HEIGHT,
   WEATHER_MOD_MIN_DISTANCE,
   WEATHER_MOD_MAX_DISTANCE,
-  WEATHER_MOD_SURFACE_WEIGHT, /* One route per surface slot. */
-  NOISE_WEATHER_MOD_COUNT = WEATHER_MOD_SURFACE_WEIGHT + NOISE_SURFACE_SLOTS
+  NOISE_WEATHER_MOD_COUNT
 } weather_mod_destination;
 
 typedef struct noise_weather_config {

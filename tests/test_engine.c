@@ -82,7 +82,7 @@ static void test_validation(void) {
   drop.bubble_radius_m = 0.0001f;
   assert(noise_trigger_drop(&a, &drop) == NOISE_INVALID_DROP);
   drop = water_drop();
-  drop.surface = NOISE_SURFACE_SLOTS;
+  drop.surface = NOISE_MAX_SURFACES;
   assert(noise_trigger_drop(&a, &drop) == NOISE_INVALID_DROP);
   drop = water_drop();
   drop.radius_m = NAN;

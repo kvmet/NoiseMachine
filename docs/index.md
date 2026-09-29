@@ -135,11 +135,11 @@ Diameters are uniform within the selected bin. The largest bin ends at
 5.8 mm, the upper limit of the terminal-speed fit. Both interpolation and
 uniform sampling within bins are implementation choices.
 
-Each arrival independently samples one of the nine surface slots in
-`rain.surface` by its `weight`. Weights need not sum to one. The default
-configuration holds preset i in slot i with weights water 0.37, dirt 0.21,
-leaf 0.26, concrete 0.15, glass 0.005, and metal 0.005. Plastic, asphalt,
-and asphalt-roof weights default to zero.
+Each arrival independently samples one of the first `rain.surface_count`
+entries in `rain.surface` by its `weight`. Weights need not sum to one. The
+default list has nine surfaces with weights Water 0.37, Dirt 0.21, Leaf
+0.26, Concrete 0.15, Glass 0.005, and Metal 0.005. Plastic, Asphalt, and
+Asphalt roof weights default to zero.
 
 The azimuth is uniform over a circle. Radial distance is
 
@@ -178,12 +178,13 @@ in the denominator define a 1 mm diameter reference drop at 4 m/s.
 
 ## Surfaces
 
-A surface is a parameter set, not a material type. Each slot in
-`rain.surface` holds one `noise_surface`, and every drop renders the same
-four damped modes from its slot: a click, two resonances, and a bubble.
-Each min/max pair is sampled uniformly per drop. Equal bounds use the value
-directly and consume no random draw. `noise_surface_preset` fills every
-field except `weight` from one of the presets below.
+A surface is a named parameter set, not a material type. `rain.surface`
+holds up to nine `noise_surface` entries, of which the first
+`rain.surface_count` are used. Every drop renders the same four damped
+modes from its surface: a click, two resonances, and a bubble. Each min/max
+pair is sampled uniformly per drop. Equal bounds use the value directly and
+consume no random draw. `name` is a NUL-terminated label of up to 15 bytes
+for hosts to show; the engine does not use it.
 
 ### Click
 
@@ -193,7 +194,7 @@ Every moving drop produces
 
 with click gain g_c sampled from `click_gain_min` to `click_gain_max`, f
 sampled from `click_frequency_min_hz` to `click_frequency_max_hz`, and
-β = `click_damping_ratio` × f. All presets use f from 1 to 16 kHz and
+β = `click_damping_ratio` × f. All default surfaces use f from 1 to 16 kHz and
 β = 2f, following [1, section 4.1.1]. This produces a brief impact impulse.
 The engine uses this temporal mode, not the paper's complete dipole field,
 water-hammer pressure amplitude, or geometry-dependent radiation model.
@@ -208,7 +209,7 @@ The click gain does not scale the resonances.
 
 A nonzero `lowpass_hz` passes the drop's click, resonances, and bubble
 through two cascaded one-pole low-pass filters at that cutoff. The
-asphalt-roof preset uses this for sound transmitted through the roof and
+Asphalt roof default uses this for sound transmitted through the roof and
 ceiling to an indoor listener.
 
 [3] demonstrates a finite-difference metal-bar model. This implementation
@@ -220,7 +221,7 @@ those recordings or reproduce its VMD decomposition.
 
 Each automatic arrival on a surface creates a bubble with
 `bubble_probability`. Bubble radius is sampled logarithmically from
-`bubble_radius_min_m` to `bubble_radius_max_m`. The water preset uses
+`bubble_radius_min_m` to `bubble_radius_max_m`. The Water default uses
 0.35 to 1.6 mm, which extends beyond the 0.16 to 0.47 mm range reported in
 [1, section 4.1.2] as an explicit sound-design choice. A manually triggered
 drop supplies any bubble radius from 0.16 to 4 mm, or zero for no bubble,
@@ -237,20 +238,20 @@ The decay approximation from [4, section 3, equation 3] is
 
     β_B = 0.13/r_B + 0.0072/r_B^(3/2)
 
-The bubble starts `bubble_delay_s` after the click; presets use 2 ms. Each
+The bubble starts `bubble_delay_s` after the click; the defaults use 2 ms. Each
 bubble samples a gain and a decay scale from their ranges. Gain multiplies
 the click amplitude A g_c. The physical damping above is divided by the
-decay scale; the water preset's 3 to 8 produces longer tails. Frequencies
+decay scale; the Water default's 3 to 8 produces longer tails. Frequencies
 remain fixed during a bubble's lifetime. The pitch-rise model described in
 [3] and [4] is not implemented. If added, instantaneous frequency must be
 integrated to get phase; substituting f(t)t directly doubles a linear
 chirp's slope.
 
-### Presets
+### Default surfaces
 
 Water has click gain 0.15 to 0.5, no resonances, and bubbles with
-probability 0.85, gain 1.2 to 2.5, and decay scale 3 to 8. The solid
-presets have no bubbles, detune 0.15, and the settings below as
+probability 0.85, gain 1.2 to 2.5, and decay scale 3 to 8. The other
+defaults have no bubbles, detune 0.15, and the settings below as
 `(frequency Hz, damping per second)` for each mode. The second mode's gain
 is half the listed resonance gain.
 
@@ -263,14 +264,17 @@ is half the listed resonance gain.
 - Asphalt: (300, 1600), (900, 2600), resonance 0.25, click 0.30.
 - Asphalt roof: (140, 300), (420, 700), resonance 0.40, click 0.25, low-pass 900 Hz.
 
-The presets represent different resonant responses, but are not measured
+The defaults represent different resonant responses, but are not measured
 material constants or solutions for a particular object shape.
 
 ### Limits
 
 | Field | Range |
 | --- | --- |
-| `weight` | 0 to 1000; at least one slot above zero |
+| `surface_count` | 1 to 9 |
+| `name` | NUL within 16 bytes |
+| `weight` | 0 to 1000; at least one used surface above zero |
+| `weight_mod` | -1 to 1 |
 | `click_gain_min`, `click_gain_max` | 0 to 2 |
 | `click_frequency_min_hz`, `click_frequency_max_hz` | 20 to 20000 Hz |
 | `click_damping_ratio` | 0.05 to 50 |
@@ -581,10 +585,10 @@ very-heavy intensity curve, or its inverse. Gain destinations use linear
 modulation around their base setting at intensity 0.5. Distance and fall height
 use the same rule in logarithmic space.
 
-Surface modulation has one route per slot, starting at
-`WEATHER_MOD_SURFACE_WEIGHT`. It multiplies each base weight by
-`1 + amount × (2I-1)`, with a 0.001 floor, then normalizes all nine
-effective weights. The floor keeps a valid
+Each surface carries its own route in `weight_mod`, so the route stays
+with the surface when the list changes. It multiplies the surface's base
+weight by `1 + weight_mod × (2I-1)`, with a 0.001 floor, then normalizes
+the effective weights of the used surfaces. The floor keeps a valid
 distribution when every route reaches its negative extreme. A zero base weight
 remains zero.
 
@@ -619,7 +623,8 @@ angle from negative 2π to positive 2π. Invalid strikes return
 voices busy returns `NOISE_VOICE_LIMIT`.
 
 `noise_trigger_drop` accepts a physical drop at the listener's arrival
-time on the surface in slot `surface`. It validates the slot index, radius
+time on surface index `surface`. It validates the index against
+`rain.surface_count`, radius
 (0.4 to 2.9 mm), velocity (0 to 12 m/s), distance (0.25 to 100 m), angle
 (negative 2π to positive 2π), and bubble radius (zero, or 0.16 to 4 mm).
 Zero velocity succeeds without allocating a voice. Invalid drops leave
@@ -667,7 +672,7 @@ and peak voice count.
 ## ESP32 and validation
 
 The sample rate, channel count, and pool size are compile-time constants.
-The engine occupies 100,800 bytes with the tested host ABI, plus 1,024
+The engine occupies 100,952 bytes with the tested host ABI, plus 1,024
 bytes for a 256-frame PCM buffer. Confirm `sizeof(noise_gen)` on the
 target ABI. Keep the generator in static storage, not a small task stack. Buffers are
 caller-owned. Trigonometry, exponentials, and square roots for drops run

@@ -17,14 +17,7 @@
 #define LOG(label, member, minimum, maximum, format) \
   LOG_IN(label, FIELD(member), minimum, maximum, format)
 #define GAIN(label, member) LINEAR(label, member, 0.0f, 1.0f, "%.2f")
-/* The weight slider spans 1e-7 to 1; its bottom position means zero. */
-#define WEIGHT(slot) \
-  [CONTROL_SURFACE_WEIGHT + slot] = {"Weight", FIELD(rain.surface[slot].weight), \
-                                     0.0f, 1.0f, 1e-7f, GUI_SCALE_LOG_OFF, 1.0f, "%.6g"}
 #define MOD(label, route) LINEAR(label, weather.mod_amount[route], -1.0f, 1.0f, "%.2f")
-#define SURFACE_MOD(label, slot) \
-  [CONTROL_WEATHER_MOD + WEATHER_MOD_SURFACE_WEIGHT + slot] = \
-      MOD(label, WEATHER_MOD_SURFACE_WEIGHT + slot)
 #define MODE(number, index) \
   [CONTROL_MODE_##number##_FREQUENCY] = LOG_IN("Mode " #number " frequency (Hz)", \
       SURFACE(mode[index].frequency_hz), 20.0f, 20000.0f, "%.0f"), \
@@ -36,8 +29,9 @@
 #define RADIUS(label, member) \
   {label, SURFACE(member), 0.00016f, 0.004f, 0.0f, GUI_SCALE_LOG, 1000.0f, "%.2f"}
 
-/* Weight given to the last nonzero surface when the user zeroes it. */
+/* Weight given to the last nonzero surface when the user zeroes or deletes it. */
 #define WEIGHT_KEPT 0.001f
+#define WEIGHT_KEPT_NOTE "At least one surface weight must be above zero"
 
 const gui_control gui_controls[CONTROL_COUNT] = {
   [CONTROL_WHITE] = GAIN("White noise gain", ambient_gain[NOISE_KIND_WHITE]),
@@ -104,9 +98,11 @@ const gui_control gui_controls[CONTROL_COUNT] = {
   [CONTROL_RAIN_MAX_DISTANCE] = LOG("Maximum distance (m)", rain.max_distance_m,
                                     0.25f, 100.0f, "%.3f"),
 
-  WEIGHT(0), WEIGHT(1), WEIGHT(2), WEIGHT(3), WEIGHT(4),
-  WEIGHT(5), WEIGHT(6), WEIGHT(7), WEIGHT(8),
-
+  /* The weight slider spans 1e-7 to 1; its bottom position means zero. */
+  [CONTROL_SURFACE_WEIGHT] = {"Weight", SURFACE(weight), 0.0f, 1.0f, 1e-7f,
+                              GUI_SCALE_LOG_OFF, 1.0f, "%.6g"},
+  [CONTROL_SURFACE_WEIGHT_MOD] = LINEAR_IN("Weight weather mod", SURFACE(weight_mod),
+                                           -1.0f, 1.0f, "%.2f"),
   [CONTROL_CLICK_GAIN_MIN] = LINEAR_IN("Click gain minimum", SURFACE(click_gain_min),
                                        0.0f, 2.0f, "%.2f"),
   [CONTROL_CLICK_GAIN_MAX] = LINEAR_IN("Click gain maximum", SURFACE(click_gain_max),
@@ -147,9 +143,6 @@ const gui_control gui_controls[CONTROL_COUNT] = {
                                                          WEATHER_MOD_MIN_DISTANCE),
   [CONTROL_WEATHER_MOD + WEATHER_MOD_MAX_DISTANCE] = MOD("Maximum distance",
                                                          WEATHER_MOD_MAX_DISTANCE),
-  SURFACE_MOD("Surface 1", 0), SURFACE_MOD("Surface 2", 1), SURFACE_MOD("Surface 3", 2),
-  SURFACE_MOD("Surface 4", 3), SURFACE_MOD("Surface 5", 4), SURFACE_MOD("Surface 6", 5),
-  SURFACE_MOD("Surface 7", 6), SURFACE_MOD("Surface 8", 7), SURFACE_MOD("Surface 9", 8),
 };
 
 /* Each lower bound stays at or below its upper bound. */
@@ -217,17 +210,17 @@ void gui_startup_config(noise_config *c) {
   c->rain.surface[WATER].bubble_decay_max = 0.58f;
 }
 
-static float *field(noise_config *config, unsigned slot, gui_control_id id) {
+static float *field(noise_config *config, unsigned surface, gui_control_id id) {
   const gui_control *control = &gui_controls[id];
-  char *base = control->scope == GUI_SCOPE_SURFACE ? (char *)&config->rain.surface[slot] :
+  char *base = control->scope == GUI_SCOPE_SURFACE ? (char *)&config->rain.surface[surface] :
                                                      (char *)config;
   return (float *)(base + control->offset);
 }
 
-float gui_control_get(const noise_config *config, unsigned slot, gui_control_id id) {
+float gui_control_get(const noise_config *config, unsigned surface, gui_control_id id) {
   const gui_control *control = &gui_controls[id];
   const char *base = control->scope == GUI_SCOPE_SURFACE ?
-      (const char *)&config->rain.surface[slot] : (const char *)config;
+      (const char *)&config->rain.surface[surface] : (const char *)config;
   return *(const float *)(base + control->offset);
 }
 
@@ -239,7 +232,7 @@ static void clamp_intensity(noise_config *c) {
 }
 
 static int only_nonzero_surface(const noise_config *c, unsigned surface) {
-  for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) {
+  for (unsigned i = 0; i < c->rain.surface_count; ++i) {
     if (i != surface && c->rain.surface[i].weight > 0.0f) return 0;
   }
   return 1;
@@ -253,24 +246,67 @@ static float clamp(const gui_control *control, float value) {
   return value;
 }
 
-const char *gui_control_set(noise_config *config, unsigned slot, gui_control_id id,
+const char *gui_control_set(noise_config *config, unsigned surface, gui_control_id id,
                             float value) {
   value = clamp(&gui_controls[id], value);
   const char *note = NULL;
-  if (id >= CONTROL_SURFACE_WEIGHT && id < CONTROL_SURFACE_WEIGHT + NOISE_SURFACE_SLOTS &&
-      value == 0.0f && only_nonzero_surface(config, id - CONTROL_SURFACE_WEIGHT)) {
+  if (id == CONTROL_SURFACE_WEIGHT && value == 0.0f && only_nonzero_surface(config, surface)) {
     value = WEIGHT_KEPT;
-    note = "At least one surface weight must be above zero";
+    note = WEIGHT_KEPT_NOTE;
   }
-  *field(config, slot, id) = value;
+  *field(config, surface, id) = value;
   for (size_t i = 0; i < sizeof(bound_pairs) / sizeof(bound_pairs[0]); ++i) {
-    float *lower = field(config, slot, bound_pairs[i][0]);
-    float *upper = field(config, slot, bound_pairs[i][1]);
+    float *lower = field(config, surface, bound_pairs[i][0]);
+    float *upper = field(config, surface, bound_pairs[i][1]);
     if (id == bound_pairs[i][0] && *upper < value) *upper = value;
     if (id == bound_pairs[i][1] && *lower > value) *lower = value;
   }
   clamp_intensity(config);
   return note;
+}
+
+/* Copies at most size - 1 bytes of name, backing off to a UTF-8 character start.
+   Returns whether all of name fit. */
+static int copy_name(char *out, size_t size, const char *name) {
+  size_t length = strlen(name);
+  size_t kept = length < size ? length : size - 1;
+  while (kept < length && kept > 0 && ((unsigned char)name[kept] & 0xC0) == 0x80) --kept;
+  memcpy(out, name, kept);
+  out[kept] = '\0';
+  return kept == length;
+}
+
+const char *gui_surface_add(noise_config *config, unsigned from) {
+  noise_rain_config *rain = &config->rain;
+  if (rain->surface_count == NOISE_MAX_SURFACES) return "The surface list is full";
+  noise_surface *added = &rain->surface[rain->surface_count];
+  *added = rain->surface[from];
+  added->weight = 0.0f;
+  added->weight_mod = 0.0f;
+  char name[2 * NOISE_SURFACE_NAME_SIZE];
+  snprintf(name, sizeof(name), "%s copy", rain->surface[from].name);
+  copy_name(added->name, sizeof(added->name), name);
+  ++rain->surface_count;
+  return NULL;
+}
+
+const char *gui_surface_delete(noise_config *config, unsigned surface) {
+  noise_rain_config *rain = &config->rain;
+  if (rain->surface_count == 1) return "At least one surface is required";
+  memmove(&rain->surface[surface], &rain->surface[surface + 1],
+          (rain->surface_count - surface - 1) * sizeof(rain->surface[0]));
+  --rain->surface_count;
+  float sum = 0.0f;
+  for (unsigned i = 0; i < rain->surface_count; ++i) sum += rain->surface[i].weight;
+  if (sum > 0.0f) return NULL;
+  rain->surface[0].weight = WEIGHT_KEPT;
+  return WEIGHT_KEPT_NOTE;
+}
+
+const char *gui_surface_rename(noise_config *config, unsigned surface, const char *name) {
+  if (!name[0]) return "Enter a name";
+  noise_surface *s = &config->rain.surface[surface];
+  return copy_name(s->name, sizeof(s->name), name) ? NULL : "Name shortened to fit";
 }
 
 void gui_set_vary(noise_config *config, int vary) {
