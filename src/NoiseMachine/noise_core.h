@@ -4,82 +4,145 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define NOISE_SAMPLE_RATE_HZ 44100u
-#define PI 3.141592653589793
-
-#define MAX_DROPLETS 1024
-
-// Physical constants
-#define GRAVITY 9.81
-#define THERMAL_DAMPING 1.6E6
-#define SOUND_IN_AIR 343.0
-#define SOUND_IN_WATER 1497.0
-#define AIR_DENSITY 1.29
-#define WATER_DENSITY 1000.0
-#define SPECIFIC_HEAT 1.4
-#define DEFAULT_ATMOSPHERIC_PRESSURE 101.325
+#define NOISE_CHANNELS 2u
+#define NOISE_MAX_DROPLETS 128u
+#define NOISE_REVERB_SAMPLES 6708u
+#define NOISE_DIRECT_SAMPLES 128u
 
 typedef enum noise_kind {
   NOISE_KIND_WHITE = 0,
-  NOISE_KIND_PINK = 1,
-  HUM_50HZ = 2,
-  HUM_60HZ = 3
+  NOISE_KIND_PINK,
+  HUM_50HZ,
+  HUM_60HZ,
+  NOISE_KIND_COUNT
 } noise_kind;
 
 typedef enum impact_surface {
   WATER = 0,
-  DIRT = 1,
-  LEAF = 2,
-  CONCRETE = 3,
-  GLASS = 4,
-  METAL = 5
+  DIRT,
+  LEAF,
+  CONCRETE,
+  GLASS,
+  METAL,
+  NOISE_SURFACE_COUNT
 } impact_surface;
 
-typedef enum impact_phase {
-  IDLE = 0,
-  HIT = 1,
-  TAIL = 2
-} impact_phase;
+typedef enum noise_result {
+  NOISE_OK = 0,
+  NOISE_INVALID_CONFIG,
+  NOISE_INVALID_DROP,
+  NOISE_VOICE_LIMIT
+} noise_result;
 
 typedef struct position_polar {
-  float distance;
-  float angle;
+  float distance_m;
+  float angle_rad; /* 0 front, pi/2 right, pi behind, 3pi/2 left. */
 } position_polar;
 
 typedef struct droplet {
-  uint32_t phase_sample;
-  impact_phase phase;
   impact_surface surface;
-  float radius;
+  float radius_m;
+  float velocity_m_s;
+  float bubble_radius_m; /* Zero disables the bubble; nonzero requires WATER. */
   position_polar position;
-  float velocity;
 } droplet;
 
-
-
 typedef struct noise_config {
-  float min_rain_intensity = 0.0;
-  float max_rain_intensity = 1.0;
-  float max_windspeed = 100.0;
-  float metal;
+  float ambient_gain[NOISE_KIND_COUNT]; /* Independent linear gains, each 0..1. */
+  float master_gain;
+  float rain_gain;
+  float rain_intensity; /* Initial intensity, 0..1; zero means no arrivals. */
+  float min_rain_intensity;
+  float max_rain_intensity;
+  int vary_rain;
+  float weather_step_s;
+  float rain_slew_s;
+  float max_drops_per_s;
+  float surface_weight[NOISE_SURFACE_COUNT]; /* Nonnegative relative weights. */
+  float min_distance_m;
+  float max_distance_m;
+  float fall_height_m;
+  float stereo_width_m; /* Ear spacing; sphere radius is half this width. */
+  float head_amount; /* 0: spaced microphones, 1: spherical head. */
+  float rear_amount; /* 0: bypass rear filter, 1: full rear filter. */
+  float reverb_gain; /* Rain send is before distance attenuation. */
 } noise_config;
 
-typedef struct noise_state {
-  float rain_intensity; // 0..1
-  float wind_intensity;
+typedef struct noise_mode {
+  float previous;
+  float current;
+  float coefficient;
+  float radius_squared;
+  uint32_t remaining;
+  uint32_t delay;
+} noise_mode;
 
+typedef struct noise_drop_voice {
+  noise_mode mode[3];
+  float ear_gain[2];
+  unsigned ear_delay[2];
+  float delay_weight[2][4];
+  float head_b0[2];
+  float head_b1[2];
+  float head_feedback;
+  float head_state[2];
+  float head_previous_input;
+  float lowpass_alpha;
+  float lowpass_state;
+  unsigned filter_tail;
+} noise_drop_voice;
+
+typedef struct noise_state {
+  float rain_intensity;
+  float rain_target;
+  unsigned weather_state;
+  unsigned active_drops;
+  unsigned peak_active_drops;
+  uint64_t generated_drops;
+  uint64_t dropped_drops;
+  uint64_t clipped_samples;
 } noise_state;
 
+/* Caller-owned storage. Treat all fields except the read-only state as private. */
 typedef struct noise_gen {
-  noise_kind kind;
-  uint32_t rng_state;
+  noise_config config;
+  noise_state state;
+  uint32_t ambient_rng;
+  uint32_t arrival_rng;
+  uint32_t drop_rng;
+  uint32_t weather_rng;
   float pink_b[7];
+  uint32_t hum_sample;
+  float hum_table[882];
+  noise_drop_voice voices[NOISE_MAX_DROPLETS];
+  float surface_cdf[NOISE_SURFACE_COUNT];
+  uint32_t weather_samples;
+  uint32_t weather_period;
+  float rain_slew;
+  float rain_slew_error;
+  float reverb[NOISE_REVERB_SAMPLES];
+  unsigned reverb_position[4];
+  float reverb_damping[4];
+  float reverb_feedback[4];
+  float direct[2][NOISE_DIRECT_SAMPLES];
+  unsigned direct_position;
 } noise_gen;
 
-void noise_init(noise_gen *gen, noise_kind kind, uint32_t seed);
+void noise_config_default(noise_config *config);
+/* Rejects invalid values without modifying gen. Seed zero aliases seed one. */
+noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t seed);
+/* Starts an arrival at the listener. Call between fills on the audio thread. */
+noise_result noise_trigger_drop(noise_gen *gen, const droplet *drop);
+/* Writes 2 * frames interleaved int16 samples (L, R); returns frames. */
+size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames);
 
-// Writes exactly count samples and returns count. On the MCU, call this once
-// per audio callback with a small on-chip buffer.
-size_t noise_fill(noise_gen *gen, int16_t *out, size_t count);
+#ifdef __cplusplus
+}
+#endif
 
 #endif
