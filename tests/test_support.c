@@ -16,6 +16,10 @@ noise_config silent_config(void) {
   return c;
 }
 
+void clear_surface_weights(noise_config *c) {
+  for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) c->rain.surface[i].weight = 0.0f;
+}
+
 droplet water_drop(void) {
   droplet drop = {WATER, 0.0005f, 4.0f, 0.0004f, {1.0f, 0.0f}};
   return drop;

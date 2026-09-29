@@ -10,6 +10,7 @@ extern noise_gen a, b;
 extern int16_t audio[2 * NOISE_SAMPLE_RATE_HZ];
 
 noise_config silent_config(void);
+void clear_surface_weights(noise_config *c);
 droplet water_drop(void);
 double channel_amplitude(double frequency, unsigned channel);
 double spectral_amplitude(double frequency);

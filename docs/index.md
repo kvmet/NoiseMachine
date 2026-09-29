@@ -7,8 +7,8 @@ of calibrated acoustic pressure or a full fluid simulation.
 
 ## Signal path and units
 
-Each rain arrival creates up to three damped modes: an impact and either a
-water bubble or two material modes. Their sum feeds the direct stereo path
+Each rain arrival creates up to four damped modes from its surface: a click,
+two resonances, and a bubble. Their sum feeds the direct stereo path
 and a shared reverb. Crickets and cicadas use the same direct path and
 reverb. Thunder has its own reverb and limiter, then joins the direct mix.
 Ambient layers join the stereo mix after the reverb.
@@ -135,10 +135,11 @@ Diameters are uniform within the selected bin. The largest bin ends at
 5.8 mm, the upper limit of the terminal-speed fit. Both interpolation and
 uniform sampling within bins are implementation choices.
 
-Each arrival independently samples a material using `rain.surface_weight`.
-Weights need not sum to one. The defaults are water 0.37, dirt 0.21,
-leaf 0.26, concrete 0.15, glass 0.005, and metal 0.005.
-Plastic, asphalt, and asphalt-roof weights default to zero.
+Each arrival independently samples one of the nine surface slots in
+`rain.surface` by its `weight`. Weights need not sum to one. The default
+configuration holds preset i in slot i with weights water 0.37, dirt 0.21,
+leaf 0.26, concrete 0.15, glass 0.005, and metal 0.005. Plastic, asphalt,
+and asphalt-roof weights default to zero.
 
 The azimuth is uniform over a circle. Radial distance is
 
@@ -175,27 +176,55 @@ not a pressure calibration. It differs from the pressure amplitude model
 in [1]. The coefficient 0.035 sets mix headroom, and the radius and speed
 in the denominator define a 1 mm diameter reference drop at 4 m/s.
 
-## Initial impact
+## Surfaces
+
+A surface is a parameter set, not a material type. Each slot in
+`rain.surface` holds one `noise_surface`, and every drop renders the same
+four damped modes from its slot: a click, two resonances, and a bubble.
+Each min/max pair is sampled uniformly per drop. Equal bounds use the value
+directly and consume no random draw. `noise_surface_preset` fills every
+field except `weight` from one of the presets below.
+
+### Click
 
 Every moving drop produces
 
-    x_I(t) = A exp(-βt) sin(2πft)
+    x_I(t) = A g_c exp(-βt) sin(2πft)
 
-with f uniform between 1 and 16 kHz and β = 2f. These frequency and damping
-choices follow [1, section 4.1.1]. This produces a brief impact impulse.
+with click gain g_c sampled from `click_gain_min` to `click_gain_max`, f
+sampled from `click_frequency_min_hz` to `click_frequency_max_hz`, and
+β = `click_damping_ratio` × f. All presets use f from 1 to 16 kHz and
+β = 2f, following [1, section 4.1.1]. This produces a brief impact impulse.
 The engine uses this temporal mode, not the paper's complete dipole field,
 water-hammer pressure amplitude, or geometry-dependent radiation model.
-Water impacts additionally sample `rain.water.impact_gain_min` to
-`rain.water.impact_gain_max`; other materials use gain one.
 
-## Water bubbles
+### Resonances
 
-Each automatic water impact creates a bubble with the configured probability,
-which defaults to 0.85. Bubble radius is sampled logarithmically from the
-configured range, which defaults to 0.35 to 1.6 mm. This extends beyond the
-0.16 to 0.47 mm range reported in [1, section 4.1.2] as an explicit sound-design
-choice. A manually triggered water drop supplies any bubble radius from 0.16 to
-4 mm, or zero for no bubble, and does not use the probability or radius range.
+Each of the two `mode` entries adds a damped sinusoid with its own
+frequency, damping per second, and gain relative to A. A mode with gain
+zero is not rendered. When either gain is above zero, each drop multiplies
+both frequencies by one factor sampled from 1 - `detune` to 1 + `detune`.
+The click gain does not scale the resonances.
+
+A nonzero `lowpass_hz` passes the drop's click, resonances, and bubble
+through two cascaded one-pole low-pass filters at that cutoff. The
+asphalt-roof preset uses this for sound transmitted through the roof and
+ceiling to an indoor listener.
+
+[3] demonstrates a finite-difference metal-bar model. This implementation
+uses a small modal approximation to keep work bounded on ESP32, not that
+bar solver. [1] uses recorded material textures; the engine does not use
+those recordings or reproduce its VMD decomposition.
+
+### Bubbles
+
+Each automatic arrival on a surface creates a bubble with
+`bubble_probability`. Bubble radius is sampled logarithmically from
+`bubble_radius_min_m` to `bubble_radius_max_m`. The water preset uses
+0.35 to 1.6 mm, which extends beyond the 0.16 to 0.47 mm range reported in
+[1, section 4.1.2] as an explicit sound-design choice. A manually triggered
+drop supplies any bubble radius from 0.16 to 4 mm, or zero for no bubble,
+on any surface, and does not use the probability or radius range.
 
 The resonance follows Minnaert's formula as presented in [1, equation 5]:
 
@@ -208,47 +237,55 @@ The decay approximation from [4, section 3, equation 3] is
 
     β_B = 0.13/r_B + 0.0072/r_B^(3/2)
 
-The bubble is a damped sinusoid with an onset 88 frames after impact,
-approximately 2 ms. Each bubble samples a gain and decay scale from configured
-ranges. Gain multiplies the water impact amplitude. The physical damping above
-is divided by the decay scale; defaults from 3 to 8 produce longer tails.
-Frequencies remain fixed during a bubble's lifetime. The pitch-rise model
-described in [3] and [4] is not implemented. If added, instantaneous frequency
-must be integrated to get phase; substituting f(t)t directly doubles a linear
+The bubble starts `bubble_delay_s` after the click; presets use 2 ms. Each
+bubble samples a gain and a decay scale from their ranges. Gain multiplies
+the click amplitude A g_c. The physical damping above is divided by the
+decay scale; the water preset's 3 to 8 produces longer tails. Frequencies
+remain fixed during a bubble's lifetime. The pitch-rise model described in
+[3] and [4] is not implemented. If added, instantaneous frequency must be
+integrated to get phase; substituting f(t)t directly doubles a linear
 chirp's slope.
 
-## Solid surfaces
+### Presets
 
-Dry solid impacts excite two additional damped modes. The following
-presets list `(frequency Hz, damping per second)` for each mode, followed
-by the first mode's amplitude relative to A and the initial impact gain.
-The second mode has half the first mode's amplitude:
+Water has click gain 0.15 to 0.5, no resonances, and bubbles with
+probability 0.85, gain 1.2 to 2.5, and decay scale 3 to 8. The solid
+presets have no bubbles, detune 0.15, and the settings below as
+`(frequency Hz, damping per second)` for each mode. The second mode's gain
+is half the listed resonance gain.
 
-- Dirt: (450, 1200), (1100, 1800), resonance 0.35, impact 1.0.
-- Leaf: (1800, 800), (4200, 1400), resonance 0.50, impact 1.0.
-- Concrete: (1400, 1400), (3700, 2200), resonance 0.45, impact 1.0.
-- Glass: (3200, 160), (7100, 260), resonance 0.325, impact 1.0.
-- Metal: (1700, 90), (4300, 150), resonance 0.40, impact 1.0.
-- Plastic: (220, 110), (650, 220), resonance 0.65, impact 0.50.
-- Asphalt: (300, 1600), (900, 2600), resonance 0.25, impact 0.30.
-- Asphalt roof: (140, 300), (420, 700), resonance 0.40, impact 0.25.
+- Dirt: (450, 1200), (1100, 1800), resonance 0.35, click 1.0.
+- Leaf: (1800, 800), (4200, 1400), resonance 0.50, click 1.0.
+- Concrete: (1400, 1400), (3700, 2200), resonance 0.45, click 1.0.
+- Glass: (3200, 160), (7100, 260), resonance 0.325, click 1.0.
+- Metal: (1700, 90), (4300, 150), resonance 0.40, click 1.0.
+- Plastic: (220, 110), (650, 220), resonance 0.65, click 0.50, low-pass 1600 Hz.
+- Asphalt: (300, 1600), (900, 2600), resonance 0.25, click 0.30.
+- Asphalt roof: (140, 300), (420, 700), resonance 0.40, click 0.25, low-pass 900 Hz.
 
-Each solid impact multiplies both frequencies by one uniform factor between
-0.85 and 1.15. The presets represent different resonant responses, but are not
-measured material constants or solutions for a particular object shape. Dry
-surfaces do not produce bubble modes. Wet solids and puddle formation are not
-modeled.
+The presets represent different resonant responses, but are not measured
+material constants or solutions for a particular object shape.
 
-Plastic and asphalt-roof sources then pass through two cascaded one-pole
-low-pass filters at 1600 Hz and 900 Hz respectively. The asphalt-roof filter
-represents sound transmitted through the roof and ceiling to an indoor
-listener. The asphalt surface has no transmission filter and preserves the
-former asphalt-roof preset.
+### Limits
 
-[3] demonstrates a finite-difference metal-bar model. This implementation
-uses a small modal approximation to keep work bounded on ESP32, not that
-bar solver. [1] uses recorded material textures; the engine does not use
-those recordings or reproduce its VMD decomposition.
+| Field | Range |
+| --- | --- |
+| `weight` | 0 to 1000; at least one slot above zero |
+| `click_gain_min`, `click_gain_max` | 0 to 2 |
+| `click_frequency_min_hz`, `click_frequency_max_hz` | 20 to 20000 Hz |
+| `click_damping_ratio` | 0.05 to 50 |
+| `mode[].frequency_hz` | 20 to 20000 Hz |
+| `mode[].damping_per_s` | 1 to 20000 |
+| `mode[].gain` | 0 to 4 |
+| `detune` | 0 to 0.5 |
+| `lowpass_hz` | 0, or 20 to 20000 Hz |
+| `bubble_probability` | 0 to 1 |
+| `bubble_radius_min_m`, `bubble_radius_max_m` | 0.16 to 4 mm |
+| `bubble_gain_min`, `bubble_gain_max` | 0 to 8 |
+| `bubble_decay_min`, `bubble_decay_max` | 0.25 to 20 |
+| `bubble_delay_s` | 0 to 0.1 s |
+
+Each max must be at least its min.
 
 ## Damped-mode renderer
 
@@ -544,8 +581,10 @@ very-heavy intensity curve, or its inverse. Gain destinations use linear
 modulation around their base setting at intensity 0.5. Distance and fall height
 use the same rule in logarithmic space.
 
-Surface modulation multiplies each base weight by `1 + amount × (2I-1)`, with a
-0.001 floor, then normalizes all nine effective weights. The floor keeps a valid
+Surface modulation has one route per slot, starting at
+`WEATHER_MOD_SURFACE_WEIGHT`. It multiplies each base weight by
+`1 + amount × (2I-1)`, with a 0.001 floor, then normalizes all nine
+effective weights. The floor keeps a valid
 distribution when every route reaches its negative extreme. A zero base weight
 remains zero.
 
@@ -580,8 +619,9 @@ angle from negative 2π to positive 2π. Invalid strikes return
 voices busy returns `NOISE_VOICE_LIMIT`.
 
 `noise_trigger_drop` accepts a physical drop at the listener's arrival
-time. It validates radius (0.4 to 2.9 mm), velocity (0 to 12 m/s), distance
-(0.25 to 100 m), angle (negative 2π to positive 2π), and bubble constraints.
+time on the surface in slot `surface`. It validates the slot index, radius
+(0.4 to 2.9 mm), velocity (0 to 12 m/s), distance (0.25 to 100 m), angle
+(negative 2π to positive 2π), and bubble radius (zero, or 0.16 to 4 mm).
 Zero velocity succeeds without allocating a voice. Invalid drops leave
 the engine unchanged. Call it between fills from the same audio thread.
 Do not call it concurrently with rendering.
@@ -605,14 +645,10 @@ Configuration ranges are:
 - `weather.vary`: 0 or 1.
 - Weather step: 0.1 to 3600 s. Slew time constant: 0.01 to 60 s.
 - Maximum arrival rate: 0 to 2000/s.
-- Material weights: 0 to 1000 each, at least one positive.
 - Distance bounds: 0.25 to 100 m, ordered; equal bounds make a ring.
 - Falling height: 0.01 to 1000 m.
 - Stereo width: 0 to 0.5 m; head and rear amounts: 0 to 1.
-- Water impact gain bounds: 0 to 2, ordered. Bubble probability: 0 to 1.
-- Automatic bubble radius bounds: 0.16 to 4 mm, ordered.
-- Bubble gain bounds: 0 to 8, ordered. Decay scale bounds: 0.25 to 20,
-  ordered.
+- Surface fields: see the table under Surfaces.
 - Weather modulation amounts: -1 to 1 each.
 
 Separate random streams drive ambient samples, wind, crickets, cicadas,
@@ -631,7 +667,7 @@ and peak voice count.
 ## ESP32 and validation
 
 The sample rate, channel count, and pool size are compile-time constants.
-The engine occupies 97,008 bytes with the tested host ABI, plus 1,024
+The engine occupies 100,800 bytes with the tested host ABI, plus 1,024
 bytes for a 256-frame PCM buffer. Confirm `sizeof(noise_gen)` on the
 target ABI. Keep the generator in static storage, not a small task stack. Buffers are
 caller-owned. Trigonometry, exponentials, and square roots for drops run

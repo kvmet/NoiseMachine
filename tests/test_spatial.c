@@ -80,10 +80,10 @@ static void test_spatial_geometry(void) {
 
 static void test_spatial_bypass_and_distance(void) {
   noise_config c = silent_config();
-  c.rain.water.impact_gain_min = 1.0f;
-  c.rain.water.impact_gain_max = 1.0f;
-  c.rain.water.bubble_decay_min = 1.0f;
-  c.rain.water.bubble_decay_max = 1.0f;
+  c.rain.surface[WATER].click_gain_min = 1.0f;
+  c.rain.surface[WATER].click_gain_max = 1.0f;
+  c.rain.surface[WATER].bubble_decay_min = 1.0f;
+  c.rain.surface[WATER].bubble_decay_max = 1.0f;
   c.listener.stereo_width_m = 0.0f;
   droplet drop = water_drop();
   drop.position.angle_rad = 0.7f;

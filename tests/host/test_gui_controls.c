@@ -69,10 +69,10 @@ static void test_follow_rules(void) {
   gui_set_vary(&c, 1);
   assert(c.weather.intensity == c.weather.min_intensity);
 
-  for (unsigned surface = 0; surface < NOISE_SURFACE_COUNT - 1; ++surface) {
+  for (unsigned surface = 0; surface < NOISE_SURFACE_SLOTS - 1; ++surface) {
     assert(gui_control_set(&c, CONTROL_SURFACE_WEIGHT + surface, 0.0f) == NULL);
   }
-  gui_control_id last = CONTROL_SURFACE_WEIGHT + NOISE_SURFACE_COUNT - 1;
+  gui_control_id last = CONTROL_SURFACE_WEIGHT + NOISE_SURFACE_SLOTS - 1;
   assert(gui_control_set(&c, last, 0.0f) != NULL);
   assert(gui_control_get(&c, last) > 0.0f);
 }

@@ -12,9 +12,12 @@
 #define LOG(label, member, minimum, maximum, format) \
   {label, FIELD(member), minimum, maximum, GUI_SCALE_LOG, 1.0f, format}
 #define GAIN(label, member) LINEAR(label, member, 0.0f, 1.0f, "%.2f")
-#define WEIGHT(label, surface) \
-  {label, FIELD(rain.surface_weight[surface]), 0.0f, 1.0f, GUI_SCALE_WEIGHT, 1.0f, "%.6g"}
+#define WEIGHT(label, slot) \
+  {label, FIELD(rain.surface[slot].weight), 0.0f, 1.0f, GUI_SCALE_WEIGHT, 1.0f, "%.6g"}
 #define MOD(label, route) LINEAR(label, weather.mod_amount[route], -1.0f, 1.0f, "%.2f")
+#define SURFACE_MOD(label, slot) \
+  [CONTROL_WEATHER_MOD + WEATHER_MOD_SURFACE_WEIGHT + slot] = \
+      MOD(label, WEATHER_MOD_SURFACE_WEIGHT + slot)
 /* Bubble radii are stored in metres and shown in millimetres. */
 #define RADIUS(label, member) \
   {label, FIELD(member), 0.00016f, 0.004f, GUI_SCALE_LOG, 1000.0f, "%.2f"}
@@ -99,23 +102,23 @@ const gui_control gui_controls[CONTROL_COUNT] = {
   [CONTROL_SURFACE_WEIGHT + ASPHALT] = WEIGHT("Asphalt", ASPHALT),
   [CONTROL_SURFACE_WEIGHT + ASPHALT_ROOF] = WEIGHT("Asphalt roof", ASPHALT_ROOF),
 
-  [CONTROL_WATER_IMPACT_MIN] = LINEAR("Impact gain minimum", rain.water.impact_gain_min,
+  [CONTROL_WATER_IMPACT_MIN] = LINEAR("Impact gain minimum", rain.surface[WATER].click_gain_min,
                                       0.0f, 2.0f, "%.2f"),
-  [CONTROL_WATER_IMPACT_MAX] = LINEAR("Impact gain maximum", rain.water.impact_gain_max,
+  [CONTROL_WATER_IMPACT_MAX] = LINEAR("Impact gain maximum", rain.surface[WATER].click_gain_max,
                                       0.0f, 2.0f, "%.2f"),
   [CONTROL_WATER_BUBBLE_PROBABILITY] = GAIN("Bubble probability",
-                                            rain.water.bubble_probability),
+                                            rain.surface[WATER].bubble_probability),
   [CONTROL_WATER_BUBBLE_RADIUS_MIN] = RADIUS("Bubble radius min (mm)",
-                                             rain.water.bubble_radius_min_m),
+                                             rain.surface[WATER].bubble_radius_min_m),
   [CONTROL_WATER_BUBBLE_RADIUS_MAX] = RADIUS("Bubble radius max (mm)",
-                                             rain.water.bubble_radius_max_m),
-  [CONTROL_WATER_BUBBLE_GAIN_MIN] = LINEAR("Bubble gain minimum", rain.water.bubble_gain_min,
+                                             rain.surface[WATER].bubble_radius_max_m),
+  [CONTROL_WATER_BUBBLE_GAIN_MIN] = LINEAR("Bubble gain minimum", rain.surface[WATER].bubble_gain_min,
                                            0.0f, 8.0f, "%.2f"),
-  [CONTROL_WATER_BUBBLE_GAIN_MAX] = LINEAR("Bubble gain maximum", rain.water.bubble_gain_max,
+  [CONTROL_WATER_BUBBLE_GAIN_MAX] = LINEAR("Bubble gain maximum", rain.surface[WATER].bubble_gain_max,
                                            0.0f, 8.0f, "%.2f"),
-  [CONTROL_WATER_BUBBLE_DECAY_MIN] = LOG("Decay scale minimum", rain.water.bubble_decay_min,
+  [CONTROL_WATER_BUBBLE_DECAY_MIN] = LOG("Decay scale minimum", rain.surface[WATER].bubble_decay_min,
                                          0.25f, 20.0f, "%.2f"),
-  [CONTROL_WATER_BUBBLE_DECAY_MAX] = LOG("Decay scale maximum", rain.water.bubble_decay_max,
+  [CONTROL_WATER_BUBBLE_DECAY_MAX] = LOG("Decay scale maximum", rain.surface[WATER].bubble_decay_max,
                                          0.25f, 20.0f, "%.2f"),
 
   [CONTROL_WEATHER_MOD + WEATHER_MOD_ARRIVAL_RATE] = MOD("Arrival density",
@@ -128,19 +131,15 @@ const gui_control gui_controls[CONTROL_COUNT] = {
                                                          WEATHER_MOD_MIN_DISTANCE),
   [CONTROL_WEATHER_MOD + WEATHER_MOD_MAX_DISTANCE] = MOD("Maximum distance",
                                                          WEATHER_MOD_MAX_DISTANCE),
-  [CONTROL_WEATHER_MOD + WEATHER_MOD_WATER_WEIGHT] = MOD("Water", WEATHER_MOD_WATER_WEIGHT),
-  [CONTROL_WEATHER_MOD + WEATHER_MOD_DIRT_WEIGHT] = MOD("Dirt", WEATHER_MOD_DIRT_WEIGHT),
-  [CONTROL_WEATHER_MOD + WEATHER_MOD_LEAF_WEIGHT] = MOD("Leaf", WEATHER_MOD_LEAF_WEIGHT),
-  [CONTROL_WEATHER_MOD + WEATHER_MOD_CONCRETE_WEIGHT] = MOD("Concrete",
-                                                            WEATHER_MOD_CONCRETE_WEIGHT),
-  [CONTROL_WEATHER_MOD + WEATHER_MOD_GLASS_WEIGHT] = MOD("Glass", WEATHER_MOD_GLASS_WEIGHT),
-  [CONTROL_WEATHER_MOD + WEATHER_MOD_METAL_WEIGHT] = MOD("Metal", WEATHER_MOD_METAL_WEIGHT),
-  [CONTROL_WEATHER_MOD + WEATHER_MOD_PLASTIC_WEIGHT] = MOD("Plastic",
-                                                           WEATHER_MOD_PLASTIC_WEIGHT),
-  [CONTROL_WEATHER_MOD + WEATHER_MOD_ASPHALT_WEIGHT] = MOD("Asphalt",
-                                                           WEATHER_MOD_ASPHALT_WEIGHT),
-  [CONTROL_WEATHER_MOD + WEATHER_MOD_ASPHALT_ROOF_WEIGHT] = MOD("Asphalt roof",
-      WEATHER_MOD_ASPHALT_ROOF_WEIGHT),
+  SURFACE_MOD("Water", WATER),
+  SURFACE_MOD("Dirt", DIRT),
+  SURFACE_MOD("Leaf", LEAF),
+  SURFACE_MOD("Concrete", CONCRETE),
+  SURFACE_MOD("Glass", GLASS),
+  SURFACE_MOD("Metal", METAL),
+  SURFACE_MOD("Plastic", PLASTIC),
+  SURFACE_MOD("Asphalt", ASPHALT),
+  SURFACE_MOD("Asphalt roof", ASPHALT_ROOF),
 };
 
 /* Each lower bound stays at or below its upper bound. */
@@ -187,24 +186,24 @@ void gui_startup_config(noise_config *c) {
   c->weather.slew_s = 2.0f;
   c->rain.max_drops_per_s = 2000.0f;
   c->rain.fall_height_m = 1000.0f;
-  c->rain.surface_weight[WATER] = 6.05624e-05f;
-  c->rain.surface_weight[DIRT] = 4.94011e-05f;
-  c->rain.surface_weight[LEAF] = 3.04537e-06f;
-  c->rain.surface_weight[CONCRETE] = 1.68416e-05f;
-  c->rain.surface_weight[GLASS] = 2.29582e-07f;
-  c->rain.surface_weight[METAL] = 2.68089e-07f;
-  c->rain.surface_weight[PLASTIC] = 3.93724e-06f;
-  c->rain.surface_weight[ASPHALT] = 0.002557f;
-  c->rain.surface_weight[ASPHALT_ROOF] = 0.001559f;
-  c->rain.water.impact_gain_min = 0.16f;
-  c->rain.water.impact_gain_max = 0.50f;
-  c->rain.water.bubble_probability = 0.51f;
-  c->rain.water.bubble_radius_min_m = 0.00023f;
-  c->rain.water.bubble_radius_max_m = 0.00069f;
-  c->rain.water.bubble_gain_min = 0.36f;
-  c->rain.water.bubble_gain_max = 2.50f;
-  c->rain.water.bubble_decay_min = 0.31f;
-  c->rain.water.bubble_decay_max = 0.58f;
+  c->rain.surface[WATER].weight = 6.05624e-05f;
+  c->rain.surface[DIRT].weight = 4.94011e-05f;
+  c->rain.surface[LEAF].weight = 3.04537e-06f;
+  c->rain.surface[CONCRETE].weight = 1.68416e-05f;
+  c->rain.surface[GLASS].weight = 2.29582e-07f;
+  c->rain.surface[METAL].weight = 2.68089e-07f;
+  c->rain.surface[PLASTIC].weight = 3.93724e-06f;
+  c->rain.surface[ASPHALT].weight = 0.002557f;
+  c->rain.surface[ASPHALT_ROOF].weight = 0.001559f;
+  c->rain.surface[WATER].click_gain_min = 0.16f;
+  c->rain.surface[WATER].click_gain_max = 0.50f;
+  c->rain.surface[WATER].bubble_probability = 0.51f;
+  c->rain.surface[WATER].bubble_radius_min_m = 0.00023f;
+  c->rain.surface[WATER].bubble_radius_max_m = 0.00069f;
+  c->rain.surface[WATER].bubble_gain_min = 0.36f;
+  c->rain.surface[WATER].bubble_gain_max = 2.50f;
+  c->rain.surface[WATER].bubble_decay_min = 0.31f;
+  c->rain.surface[WATER].bubble_decay_max = 0.58f;
 }
 
 static float *field(noise_config *config, gui_control_id id) {
@@ -223,8 +222,8 @@ static void clamp_intensity(noise_config *c) {
 }
 
 static int only_nonzero_surface(const noise_config *c, unsigned surface) {
-  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
-    if (i != surface && c->rain.surface_weight[i] > 0.0f) return 0;
+  for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) {
+    if (i != surface && c->rain.surface[i].weight > 0.0f) return 0;
   }
   return 1;
 }
@@ -233,7 +232,7 @@ const char *gui_control_set(noise_config *config, gui_control_id id, float value
   const gui_control *control = &gui_controls[id];
   value = fminf(control->maximum, fmaxf(control->minimum, value));
   const char *note = NULL;
-  if (id >= CONTROL_SURFACE_WEIGHT && id < CONTROL_SURFACE_WEIGHT + NOISE_SURFACE_COUNT &&
+  if (id >= CONTROL_SURFACE_WEIGHT && id < CONTROL_SURFACE_WEIGHT + NOISE_SURFACE_SLOTS &&
       value == 0.0f && only_nonzero_surface(config, id - CONTROL_SURFACE_WEIGHT)) {
     value = WEIGHT_KEPT;
     note = "At least one surface weight must be above zero";

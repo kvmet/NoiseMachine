@@ -66,13 +66,13 @@ make -C host gui
 ```
 
 Press **Start** for continuous playback. The Mixer, Wind, Insects, Thunder,
-Rain, Water, Weather Mod, and Spatial tabs expose every field in `noise_config`.
+Rain, Water, Weather Mod, and Spatial tabs expose the main `noise_config` fields.
 **Strike** on the Thunder tab starts one strike at a random position within
 the distance range. **Export…** renders the current settings to an AAC `.m4a`
 file of a chosen length.
 Wind has gain, brightness, gust depth, gust rate, and stereo width controls.
-Crickets and cicadas have separate activity, pitch, texture, and stereo controls. Water controls randomized
-impact gain, bubble probability, radius, gain, and decay ranges. Weather Mod
+Crickets and cicadas have separate activity, pitch, texture, and stereo controls. Water controls the water slot's
+click gain, bubble probability, radius, gain, and decay ranges. Weather Mod
 routes intensity to density, size, gain, reverb, physical, and surface
 parameters with bipolar attenuverters. Type an exact value or use a slider;
 wide physical ranges use logarithmic sliders. Changes apply while audio plays.
@@ -136,14 +136,14 @@ if (noise_init(&generator, &config, 1) != NOISE_OK) {
 noise_fill(&generator, frames, 256);
 ```
 
-Configuration also exposes individual layer gains, material weights, source
+Configuration also exposes individual layer gains, nine surface slots, source
 distance bounds, falling height, weather interval, and smoothing time.
-`noise_trigger_drop` accepts an individual drop with radius, speed, material,
+`noise_trigger_drop` accepts an individual drop with radius, speed, surface slot,
 bubble radius, and polar position. `noise_trigger_thunder` accepts a strike
 distance and angle. See [the API and limits](docs/index.md#api-and-limits).
 
 The engine owns no heap memory and renders into caller-owned buffers. It
-currently occupies about 97 KB plus output buffers. Keep it in static storage.
+currently occupies about 101 KB plus output buffers. Keep it in static storage.
 Configuration changes require reinitialization; control and render calls must
 share one thread. The API counts stereo frames, so allocate two samples per
 frame.

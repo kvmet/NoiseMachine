@@ -128,19 +128,23 @@ int main(int argc, char **argv) {
         "water", "dirt", "leaf", "concrete", "glass", "metal", "plastic", "asphalt",
         "asphalt-roof"
       };
+      /* The default config holds preset i in slot i, so a preset selects its slot. */
       if (strcmp(value, "mixed") == 0) {
         noise_config defaults;
         noise_config_default(&defaults);
-        memcpy(config.rain.surface_weight, defaults.rain.surface_weight, sizeof(config.rain.surface_weight));
+        for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) {
+          config.rain.surface[i].weight = defaults.rain.surface[i].weight;
+        }
       } else {
-        unsigned surface = 0;
-        while (surface < NOISE_SURFACE_COUNT && strcmp(value, names[surface])) ++surface;
-        if (surface == NOISE_SURFACE_COUNT) {
+        unsigned preset = 0;
+        while (preset < NOISE_SURFACE_PRESET_COUNT && strcmp(value, names[preset])) ++preset;
+        if (preset == NOISE_SURFACE_PRESET_COUNT) {
           fprintf(stderr, "unknown surface: %s\n", value);
           return 1;
         }
-        memset(config.rain.surface_weight, 0, sizeof(config.rain.surface_weight));
-        config.rain.surface_weight[surface] = 1.0f;
+        for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) {
+          config.rain.surface[i].weight = i == preset ? 1.0f : 0.0f;
+        }
       }
     } else if (strcmp(arg, "-c") == 0) {
       static const char *names[] = {"dog-day", "minminzemi", "higurashi"};

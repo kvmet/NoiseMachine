@@ -10,29 +10,70 @@
 #define NOISE_WATER_DENSITY 1000.0f
 #define NOISE_PRESSURE_PA 101325.0f
 
-/* Presets add source low-pass cutoff after impact gain; zero bypasses it. */
-static const float material_modes[NOISE_SURFACE_COUNT][7] = {
-  {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f},
-  {450.0f, 1200.0f, 1100.0f, 1800.0f, 0.35f, 1.0f, 0.0f},
-  {1800.0f, 800.0f, 4200.0f, 1400.0f, 0.5f, 1.0f, 0.0f},
-  {1400.0f, 1400.0f, 3700.0f, 2200.0f, 0.45f, 1.0f, 0.0f},
-  {3200.0f, 160.0f, 7100.0f, 260.0f, 0.325f, 1.0f, 0.0f},
-  {1700.0f, 90.0f, 4300.0f, 150.0f, 0.4f, 1.0f, 0.0f},
-  {220.0f, 110.0f, 650.0f, 220.0f, 0.65f, 0.5f, 1600.0f},
-  {300.0f, 1600.0f, 900.0f, 2600.0f, 0.25f, 0.3f, 0.0f},
-  {140.0f, 300.0f, 420.0f, 700.0f, 0.4f, 0.25f, 900.0f}
+#define BUBBLE_RADIUS_MIN_M 0.00016f
+#define BUBBLE_RADIUS_MAX_M 0.004f
+
+/* Every preset shares the click from [1, section 4.1.1]: 1 to 16 kHz, damping 2f. */
+#define CLICK .click_frequency_min_hz = 1000.0f, .click_frequency_max_hz = 16000.0f, \
+              .click_damping_ratio = 2.0f
+/* Bubble fields a surface without bubbles still needs to be valid. */
+#define NO_BUBBLE .bubble_radius_min_m = 0.00035f, .bubble_radius_max_m = 0.0016f, \
+                  .bubble_gain_min = 1.0f, .bubble_gain_max = 1.0f, \
+                  .bubble_decay_min = 1.0f, .bubble_decay_max = 1.0f, .bubble_delay_s = 0.002f
+#define SOLID(click, f1, d1, f2, d2, resonance, lowpass) { \
+    .click_gain_min = click, .click_gain_max = click, CLICK, \
+    .mode = {{f1, d1, resonance}, {f2, d2, 0.5f * resonance}}, \
+    .detune = 0.15f, .lowpass_hz = lowpass, NO_BUBBLE}
+
+static const noise_surface presets[NOISE_SURFACE_PRESET_COUNT] = {
+  [WATER] = {
+    .click_gain_min = 0.15f, .click_gain_max = 0.5f, CLICK,
+    .mode = {{1000.0f, 1000.0f, 0.0f}, {1000.0f, 1000.0f, 0.0f}},
+    .bubble_probability = 0.85f,
+    .bubble_radius_min_m = 0.00035f, .bubble_radius_max_m = 0.0016f,
+    .bubble_gain_min = 1.2f, .bubble_gain_max = 2.5f,
+    .bubble_decay_min = 3.0f, .bubble_decay_max = 8.0f,
+    .bubble_delay_s = 0.002f},
+  [DIRT] = SOLID(1.0f, 450.0f, 1200.0f, 1100.0f, 1800.0f, 0.35f, 0.0f),
+  [LEAF] = SOLID(1.0f, 1800.0f, 800.0f, 4200.0f, 1400.0f, 0.5f, 0.0f),
+  [CONCRETE] = SOLID(1.0f, 1400.0f, 1400.0f, 3700.0f, 2200.0f, 0.45f, 0.0f),
+  [GLASS] = SOLID(1.0f, 3200.0f, 160.0f, 7100.0f, 260.0f, 0.325f, 0.0f),
+  [METAL] = SOLID(1.0f, 1700.0f, 90.0f, 4300.0f, 150.0f, 0.4f, 0.0f),
+  [PLASTIC] = SOLID(0.5f, 220.0f, 110.0f, 650.0f, 220.0f, 0.65f, 1600.0f),
+  [ASPHALT] = SOLID(0.3f, 300.0f, 1600.0f, 900.0f, 2600.0f, 0.25f, 0.0f),
+  [ASPHALT_ROOF] = SOLID(0.25f, 140.0f, 300.0f, 420.0f, 700.0f, 0.4f, 900.0f),
 };
 
-static int water_config_valid(const noise_water_config *c) {
-  return in_range(c->impact_gain_min, 0.0f, 2.0f) &&
-         in_range(c->impact_gain_max, c->impact_gain_min, 2.0f) &&
-         in_range(c->bubble_probability, 0.0f, 1.0f) &&
-         in_range(c->bubble_radius_min_m, 0.00016f, 0.004f) &&
-         in_range(c->bubble_radius_max_m, c->bubble_radius_min_m, 0.004f) &&
-         in_range(c->bubble_gain_min, 0.0f, 8.0f) &&
-         in_range(c->bubble_gain_max, c->bubble_gain_min, 8.0f) &&
-         in_range(c->bubble_decay_min, 0.25f, 20.0f) &&
-         in_range(c->bubble_decay_max, c->bubble_decay_min, 20.0f);
+void noise_surface_preset(noise_surface *surface, surface_preset preset) {
+  float weight = surface->weight;
+  *surface = presets[preset];
+  surface->weight = weight;
+}
+
+static int mode_valid(const noise_surface_mode *m) {
+  return in_range(m->frequency_hz, 20.0f, 20000.0f) &&
+         in_range(m->damping_per_s, 1.0f, 20000.0f) &&
+         in_range(m->gain, 0.0f, 4.0f);
+}
+
+static int surface_valid(const noise_surface *s) {
+  return in_range(s->weight, 0.0f, 1000.0f) &&
+         in_range(s->click_gain_min, 0.0f, 2.0f) &&
+         in_range(s->click_gain_max, s->click_gain_min, 2.0f) &&
+         in_range(s->click_frequency_min_hz, 20.0f, 20000.0f) &&
+         in_range(s->click_frequency_max_hz, s->click_frequency_min_hz, 20000.0f) &&
+         in_range(s->click_damping_ratio, 0.05f, 50.0f) &&
+         mode_valid(&s->mode[0]) && mode_valid(&s->mode[1]) &&
+         in_range(s->detune, 0.0f, 0.5f) &&
+         (s->lowpass_hz == 0.0f || in_range(s->lowpass_hz, 20.0f, 20000.0f)) &&
+         in_range(s->bubble_probability, 0.0f, 1.0f) &&
+         in_range(s->bubble_radius_min_m, BUBBLE_RADIUS_MIN_M, BUBBLE_RADIUS_MAX_M) &&
+         in_range(s->bubble_radius_max_m, s->bubble_radius_min_m, BUBBLE_RADIUS_MAX_M) &&
+         in_range(s->bubble_gain_min, 0.0f, 8.0f) &&
+         in_range(s->bubble_gain_max, s->bubble_gain_min, 8.0f) &&
+         in_range(s->bubble_decay_min, 0.25f, 20.0f) &&
+         in_range(s->bubble_decay_max, s->bubble_decay_min, 20.0f) &&
+         in_range(s->bubble_delay_s, 0.0f, 0.1f);
 }
 
 int noise_rain_config_valid(const noise_rain_config *c) {
@@ -40,39 +81,30 @@ int noise_rain_config_valid(const noise_rain_config *c) {
       !in_range(c->max_drops_per_s, 0.0f, 2000.0f) ||
       !in_range(c->min_distance_m, 0.25f, 100.0f) ||
       !in_range(c->max_distance_m, c->min_distance_m, 100.0f) ||
-      !in_range(c->fall_height_m, 0.01f, 1000.0f) ||
-      !water_config_valid(&c->water)) {
+      !in_range(c->fall_height_m, 0.01f, 1000.0f)) {
     return 0;
   }
   float sum = 0.0f;
-  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
-    if (!in_range(c->surface_weight[i], 0.0f, 1000.0f)) return 0;
-    sum += c->surface_weight[i];
+  for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) {
+    if (!surface_valid(&c->surface[i])) return 0;
+    sum += c->surface[i].weight;
   }
   return sum > 0.0f;
 }
 
 void noise_rain_config_default(noise_rain_config *c) {
+  static const float weights[NOISE_SURFACE_SLOTS] = {
+    [WATER] = 0.37f, [DIRT] = 0.21f, [LEAF] = 0.26f, [CONCRETE] = 0.15f,
+    [GLASS] = 0.005f, [METAL] = 0.005f};
   c->gain = 0.5f;
   c->max_drops_per_s = 900.0f;
-  c->surface_weight[WATER] = 0.37f;
-  c->surface_weight[DIRT] = 0.21f;
-  c->surface_weight[LEAF] = 0.26f;
-  c->surface_weight[CONCRETE] = 0.15f;
-  c->surface_weight[GLASS] = 0.005f;
-  c->surface_weight[METAL] = 0.005f;
   c->min_distance_m = 0.75f;
   c->max_distance_m = 5.0f;
   c->fall_height_m = 20.0f;
-  c->water.impact_gain_min = 0.15f;
-  c->water.impact_gain_max = 0.5f;
-  c->water.bubble_probability = 0.85f;
-  c->water.bubble_radius_min_m = 0.00035f;
-  c->water.bubble_radius_max_m = 0.0016f;
-  c->water.bubble_gain_min = 1.2f;
-  c->water.bubble_gain_max = 2.5f;
-  c->water.bubble_decay_min = 3.0f;
-  c->water.bubble_decay_max = 8.0f;
+  for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) {
+    noise_surface_preset(&c->surface[i], (surface_preset)i);
+    c->surface[i].weight = weights[i];
+  }
 }
 
 void noise_rain_init(noise_rain *rain, uint32_t seed) {
@@ -82,22 +114,27 @@ void noise_rain_init(noise_rain *rain, uint32_t seed) {
 
 void noise_rain_configure(noise_rain *rain, const noise_rain_config *c) {
   float sum = 0.0f;
-  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) sum += c->surface_weight[i];
+  for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) sum += c->surface[i].weight;
   float cumulative = 0.0f;
-  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
-    cumulative += c->surface_weight[i];
+  for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) {
+    cumulative += c->surface[i].weight;
     rain->surface_cdf[i] = cumulative / sum;
   }
 }
 
 int noise_drop_valid(const droplet *drop) {
-  return (unsigned)drop->surface < NOISE_SURFACE_COUNT &&
+  return drop->surface < NOISE_SURFACE_SLOTS &&
          in_range(drop->radius_m, 0.0004f, 0.0029f) &&
          in_range(drop->velocity_m_s, 0.0f, 12.0f) &&
          in_range(drop->position.distance_m, 0.25f, 100.0f) &&
          in_range(drop->position.angle_rad, -2.0f * NOISE_PI, 2.0f * NOISE_PI) &&
          (drop->bubble_radius_m == 0.0f ||
-          (drop->surface == WATER && in_range(drop->bubble_radius_m, 0.00016f, 0.004f)));
+          in_range(drop->bubble_radius_m, BUBBLE_RADIUS_MIN_M, BUBBLE_RADIUS_MAX_M));
+}
+
+/* Skips the draw for an empty range so fixed values leave the stream untouched. */
+static float sample_range(uint32_t *rng, float low, float high) {
+  return low < high ? random_between(rng, low, high) : low;
 }
 
 noise_result noise_rain_start_drop(noise_rain *rain, noise_state *state, const noise_rain_config *c,
@@ -113,72 +150,72 @@ noise_result noise_rain_start_drop(noise_rain *rain, noise_state *state, const n
   if (state->active_drops > state->peak_active_drops) {
     state->peak_active_drops = state->active_drops;
   }
-  const noise_water_config *water = &c->water;
+  const noise_surface *s = &c->surface[drop->surface];
   float radius_ratio = drop->radius_m / 0.0005f;
   float amplitude = 0.035f * sqrtf(radius_ratio * radius_ratio * radius_ratio) *
                     drop->velocity_m_s / 4.0f;
-  float impact_gain = drop->surface == WATER ?
-      random_between(&rain->drop_rng, water->impact_gain_min, water->impact_gain_max) :
-      material_modes[drop->surface][5];
-  float material_cutoff = material_modes[drop->surface][6];
-  voice->material_lowpass_alpha = material_cutoff > 0.0f ?
-      -expm1f(-2.0f * NOISE_PI * material_cutoff / NOISE_SAMPLE_RATE_HZ) : 1.0f;
-  float impact_frequency = 1000.0f + 15000.0f * random_unit(&rain->drop_rng);
-  mode_init(&voice->mode[0], impact_frequency, 2.0f * impact_frequency,
-            amplitude * impact_gain, 0);
-  if (drop->surface == WATER && drop->bubble_radius_m > 0.0f) {
+  float click_gain = sample_range(&rain->drop_rng, s->click_gain_min, s->click_gain_max);
+  voice->material_lowpass_alpha = s->lowpass_hz > 0.0f ?
+      -expm1f(-2.0f * NOISE_PI * s->lowpass_hz / NOISE_SAMPLE_RATE_HZ) : 1.0f;
+  float click_frequency = sample_range(&rain->drop_rng, s->click_frequency_min_hz,
+                                       s->click_frequency_max_hz);
+  mode_init(&voice->mode[NOISE_DROP_CLICK], click_frequency,
+            s->click_damping_ratio * click_frequency, amplitude * click_gain, 0);
+  if (s->mode[0].gain > 0.0f || s->mode[1].gain > 0.0f) {
+    float tuning = sample_range(&rain->drop_rng, 1.0f - s->detune, 1.0f + s->detune);
+    for (unsigned m = 0; m < 2; ++m) {
+      const noise_surface_mode *mode = &s->mode[m];
+      if (mode->gain > 0.0f) {
+        mode_init(&voice->mode[NOISE_DROP_RESONANCE + m], mode->frequency_hz * tuning,
+                  mode->damping_per_s, amplitude * mode->gain, 0);
+      }
+    }
+  }
+  if (drop->bubble_radius_m > 0.0f) {
     float r = drop->bubble_radius_m;
     float frequency = sqrtf(3.0f * 1.4f * NOISE_PRESSURE_PA / NOISE_WATER_DENSITY) /
                       (2.0f * NOISE_PI * r);
     float damping = 0.13f / r + 0.0072f / (r * sqrtf(r));
-    float decay = random_between(&rain->drop_rng, water->bubble_decay_min,
-                                 water->bubble_decay_max);
-    float bubble_gain = random_between(&rain->drop_rng, water->bubble_gain_min,
-                                       water->bubble_gain_max);
-    /* Bubble onset follows the impact; 2 ms is an audible-design choice. */
-    mode_init(&voice->mode[1], frequency, damping / decay,
-              bubble_gain * impact_gain * amplitude,
-              (uint32_t)(0.002f * NOISE_SAMPLE_RATE_HZ));
-  } else if (drop->surface != WATER) {
-    const float *m = material_modes[drop->surface];
-    float tuning = 0.85f + 0.3f * random_unit(&rain->drop_rng);
-    mode_init(&voice->mode[1], m[0] * tuning, m[1], amplitude * m[4], 0);
-    mode_init(&voice->mode[2], m[2] * tuning, m[3], amplitude * m[4] * 0.5f, 0);
+    float decay = sample_range(&rain->drop_rng, s->bubble_decay_min, s->bubble_decay_max);
+    float bubble_gain = sample_range(&rain->drop_rng, s->bubble_gain_min, s->bubble_gain_max);
+    mode_init(&voice->mode[NOISE_DROP_BUBBLE], frequency, damping / decay,
+              bubble_gain * click_gain * amplitude,
+              (uint32_t)(s->bubble_delay_s * NOISE_SAMPLE_RATE_HZ));
   }
   noise_spatial_init(&voice->spatial, listener, drop->position);
   voice->filter_tail = 256;
   return NOISE_OK;
 }
 
-static impact_surface choose_surface(noise_rain *rain, const noise_rain_config *c,
-                                     const noise_weather_config *weather, float intensity) {
-  const float *mod_amount = &weather->mod_amount[WEATHER_MOD_WATER_WEIGHT];
+static unsigned choose_surface(noise_rain *rain, const noise_rain_config *c,
+                               const noise_weather_config *weather, float intensity) {
+  const float *mod_amount = &weather->mod_amount[WEATHER_MOD_SURFACE_WEIGHT];
   int modulated = 0;
-  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) modulated |= mod_amount[i] != 0.0f;
+  for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) modulated |= mod_amount[i] != 0.0f;
   float choice = random_unit(&rain->drop_rng);
   if (!modulated) {
-    unsigned surface = WATER;
-    while (surface + 1 < NOISE_SURFACE_COUNT && choice >= rain->surface_cdf[surface]) ++surface;
-    return (impact_surface)surface;
+    unsigned surface = 0;
+    while (surface + 1 < NOISE_SURFACE_SLOTS && choice >= rain->surface_cdf[surface]) ++surface;
+    return surface;
   }
 
   float source = 2.0f * intensity - 1.0f;
-  float weight[NOISE_SURFACE_COUNT];
+  float weight[NOISE_SURFACE_SLOTS];
   float total = 0.0f;
-  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
+  for (unsigned i = 0; i < NOISE_SURFACE_SLOTS; ++i) {
     float scale = fmaxf(0.001f, 1.0f + mod_amount[i] * source);
-    weight[i] = c->surface_weight[i] * scale;
+    weight[i] = c->surface[i].weight * scale;
     total += weight[i];
   }
   float target = choice * total;
   float cumulative = 0.0f;
-  unsigned surface = WATER;
-  while (surface + 1 < NOISE_SURFACE_COUNT) {
+  unsigned surface = 0;
+  while (surface + 1 < NOISE_SURFACE_SLOTS) {
     cumulative += weight[surface];
     if (target < cumulative) break;
     ++surface;
   }
-  return (impact_surface)surface;
+  return surface;
 }
 
 static void spawn_rain(noise_rain *rain, noise_state *state, const noise_rain_config *c,
@@ -211,10 +248,11 @@ static void spawn_rain(noise_rain *rain, noise_state *state, const noise_rain_co
       -2.0f * NOISE_GRAVITY * fall_height / (terminal * terminal)));
   drop.surface = choose_surface(rain, c, weather, intensity);
   drop.bubble_radius_m = 0.0f;
-  const noise_water_config *water = &c->water;
-  if (drop.surface == WATER && random_unit(&rain->drop_rng) < water->bubble_probability) {
-    drop.bubble_radius_m = random_log_between(&rain->drop_rng,
-        water->bubble_radius_min_m, water->bubble_radius_max_m);
+  const noise_surface *s = &c->surface[drop.surface];
+  if (s->bubble_probability > 0.0f && random_unit(&rain->drop_rng) < s->bubble_probability) {
+    drop.bubble_radius_m = s->bubble_radius_min_m < s->bubble_radius_max_m ?
+        random_log_between(&rain->drop_rng, s->bubble_radius_min_m, s->bubble_radius_max_m) :
+        s->bubble_radius_min_m;
   }
   float near = noise_weather_mod_log(c->min_distance_m,
       mod_amount[WEATHER_MOD_MIN_DISTANCE], intensity, 0.25f, 100.0f);
@@ -251,7 +289,7 @@ float noise_rain_next(noise_rain *rain, noise_state *state, const noise_rain_con
     noise_drop_voice *voice = &rain->voice[i];
     float source = 0.0f;
     unsigned remaining = 0;
-    for (unsigned m = 0; m < 3; ++m) {
+    for (unsigned m = 0; m < NOISE_DROP_MODES; ++m) {
       source += mode_next(&voice->mode[m]);
       remaining += voice->mode[m].remaining + voice->mode[m].delay;
     }

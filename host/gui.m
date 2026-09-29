@@ -334,7 +334,7 @@
   [rainRows addObject:[self row:CONTROL_DROP_RATE]];
   [rainRows addObject:[self row:CONTROL_FALL_HEIGHT]];
   [rainRows addObject:[self sectionLabel:@"Surface weights"]];
-  [rainRows addObjectsFromArray:[self rowsFrom:CONTROL_SURFACE_WEIGHT count:NOISE_SURFACE_COUNT]];
+  [rainRows addObjectsFromArray:[self rowsFrom:CONTROL_SURFACE_WEIGHT count:NOISE_SURFACE_SLOTS]];
   [rainRows addObject:[self seedRow]];
   NSView *rain = [self tabViewWithRows:rainRows];
 
@@ -346,10 +346,10 @@
   NSMutableArray<NSView *> *modRows = [NSMutableArray arrayWithObjects:
       [self sectionLabel:@"Weather intensity attenuverters"],
       [NSTextField labelWithString:@"+ follows intensity     0 disconnects     - inverts"], nil];
-  [modRows addObjectsFromArray:[self rowsFrom:CONTROL_WEATHER_MOD count:WEATHER_MOD_WATER_WEIGHT]];
+  [modRows addObjectsFromArray:[self rowsFrom:CONTROL_WEATHER_MOD count:WEATHER_MOD_SURFACE_WEIGHT]];
   [modRows addObject:[self sectionLabel:@"Surface weights"]];
-  [modRows addObjectsFromArray:[self rowsFrom:CONTROL_WEATHER_MOD + WEATHER_MOD_WATER_WEIGHT
-                                        count:NOISE_SURFACE_COUNT]];
+  [modRows addObjectsFromArray:[self rowsFrom:CONTROL_WEATHER_MOD + WEATHER_MOD_SURFACE_WEIGHT
+                                        count:NOISE_SURFACE_SLOTS]];
   NSView *weatherMod = [self tabViewWithRows:modRows];
 
   NSView *spatial = [self tabViewWithRows:@[
