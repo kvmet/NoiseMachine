@@ -381,26 +381,19 @@ static void wind_init(noise_wind *wind, uint32_t seed) {
   wind->rng = stream_seed(seed, 0x1715609du);
   wind->gust = 0.5f;
   wind->gust_target = 0.5f;
-  wind->brightness_cache = -1.0f;
-  wind->gust_rate_cache = -1.0f;
+}
+
+static void wind_configure(noise_wind *wind, const noise_wind_config *c) {
+  wind->gust_alpha = -expm1f(-2.0f * NOISE_PI * c->gust_rate_hz / NOISE_SAMPLE_RATE_HZ);
+  float cutoff = 400.0f * powf(20.0f, c->brightness);
+  wind->air_alpha = -expm1f(-2.0f * NOISE_PI * cutoff / NOISE_SAMPLE_RATE_HZ);
 }
 
 static void wind_next(noise_wind *wind, const noise_wind_config *c, float *left, float *right) {
   if (c->gain <= 0.0f) return;
-  float rate = c->gust_rate_hz;
-  if (rate != wind->gust_rate_cache) {
-    wind->gust_rate_cache = rate;
-    wind->gust_alpha = -expm1f(-2.0f * NOISE_PI * rate / NOISE_SAMPLE_RATE_HZ);
-  }
-  float brightness = c->brightness;
-  if (brightness != wind->brightness_cache) {
-    wind->brightness_cache = brightness;
-    float cutoff = 400.0f * powf(20.0f, brightness);
-    wind->air_alpha = -expm1f(-2.0f * NOISE_PI * cutoff / NOISE_SAMPLE_RATE_HZ);
-  }
   if (wind->gust_samples == 0) {
     wind->gust_target = random_unit(&wind->rng);
-    wind->gust_samples = (uint32_t)(NOISE_SAMPLE_RATE_HZ / rate);
+    wind->gust_samples = (uint32_t)(NOISE_SAMPLE_RATE_HZ / c->gust_rate_hz);
   }
   --wind->gust_samples;
   wind->gust += wind->gust_alpha * (wind->gust_target - wind->gust);
@@ -586,8 +579,6 @@ static void cicada_config_default(noise_cicada_config *c) {
 
 static void cicadas_init(noise_cicadas *cicadas, uint32_t seed) {
   cicadas->rng = stream_seed(seed, 0x94d049bbu);
-  cicadas->pitch_cache = -1.0f;
-  cicadas->species_cache = -1;
   cicadas->swell = 0.5f;
   cicadas->swell_target = 0.5f;
 }
@@ -714,18 +705,21 @@ static float cicada_next(uint32_t *rng, noise_cicada_voice *voice, const noise_c
   return sample;
 }
 
+/* A crowd at spread pitches blurs into a band wider than one body. */
+static float cicada_chorus_q(const noise_cicada_config *c) {
+  return fmaxf(3.0f, 0.5f * cicada_songs[c->species].q);
+}
+
+static void cicadas_configure(noise_cicadas *cicadas, const noise_cicada_config *c) {
+  for (unsigned ear = 0; ear < 2; ++ear) {
+    resonator_tune(&cicadas->chorus[ear], c->pitch_hz, cicada_chorus_q(c));
+  }
+}
+
 static void cicada_chorus_next(noise_cicadas *cicadas, const noise_cicada_config *c,
                                noise_bus *bus) {
   uint32_t *rng = &cicadas->rng;
-  /* A crowd at spread pitches blurs into a band wider than one body. */
-  float q = fmaxf(3.0f, 0.5f * cicada_songs[c->species].q);
-  if (c->pitch_hz != cicadas->pitch_cache || (int)c->species != cicadas->species_cache) {
-    cicadas->pitch_cache = c->pitch_hz;
-    cicadas->species_cache = (int)c->species;
-    for (unsigned ear = 0; ear < 2; ++ear) {
-      resonator_tune(&cicadas->chorus[ear], c->pitch_hz, q);
-    }
-  }
+  float q = cicada_chorus_q(c);
   if (cicadas->swell_samples == 0) {
     cicadas->swell_target = random_between(rng, 0.3f, 1.0f);
     cicadas->swell_samples = 4u * NOISE_SAMPLE_RATE_HZ;
@@ -807,7 +801,14 @@ static void thunder_init(noise_thunder *thunder, uint32_t seed) {
     reflector->reflectivity = random_between(&terrain_rng, 0.3f, 0.6f);
     reflector->smear_s = random_between(&terrain_rng, 0.1f, 0.4f);
   }
-  thunder->reverb.decay_cache = -1.0f;
+}
+
+static void thunder_configure(noise_thunder *thunder, const noise_thunder_config *c) {
+  float rate = (float)NOISE_SAMPLE_RATE_HZ / THUNDER_REVERB_DECIMATION;
+  for (unsigned i = 0; i < NOISE_REVERB_LINES; ++i) {
+    thunder->reverb.fdn.feedback[i] =
+        powf(0.001f, (float)thunder_reverb_length[i] / (c->reverb_decay_s * rate));
+  }
 }
 
 static float length3(const float v[3]) {
@@ -1115,15 +1116,7 @@ static float thunder_limit(float x) {
 }
 
 /* Runs at a quarter rate: thunder is mostly below 2 kHz, and memory drops by four. */
-static void thunder_reverb_next(noise_thunder_reverb *reverb, float decay_s, float send,
-                                float wet[2]) {
-  if (decay_s != reverb->decay_cache) {
-    reverb->decay_cache = decay_s;
-    float rate = (float)NOISE_SAMPLE_RATE_HZ / THUNDER_REVERB_DECIMATION;
-    for (unsigned i = 0; i < NOISE_REVERB_LINES; ++i) {
-      reverb->fdn.feedback[i] = powf(0.001f, (float)thunder_reverb_length[i] / (decay_s * rate));
-    }
-  }
+static void thunder_reverb_next(noise_thunder_reverb *reverb, float send, float wet[2]) {
   reverb->input += send;
   if (++reverb->phase == THUNDER_REVERB_DECIMATION) {
     reverb->phase = 0;
@@ -1173,7 +1166,7 @@ static void thunder_next(noise_thunder *thunder, const noise_thunder_config *c,
   if (c->reverb_gain > 0.0f) {
     float wet[2];
     /* Unity send: gain 0.5 puts the wet about 3 dB under the dry roll. */
-    thunder_reverb_next(&thunder->reverb, c->reverb_decay_s, sum[0] + sum[1], wet);
+    thunder_reverb_next(&thunder->reverb, sum[0] + sum[1], wet);
     sum[0] += c->reverb_gain * wet[0];
     sum[1] += c->reverb_gain * wet[1];
   }
@@ -1208,16 +1201,38 @@ static void weather_config_default(noise_weather_config *c) {
   c->mod_amount[WEATHER_MOD_DROP_SIZE] = 1.0f;
 }
 
-static void weather_init(noise_weather *weather, noise_state *state,
-                         const noise_weather_config *c, uint32_t seed) {
-  weather->rng = stream_seed(seed, 0x78dde6e4u);
+/* Jumps to the configured intensity and the Markov state nearest it. */
+static void weather_start(noise_weather *weather, noise_state *state,
+                          const noise_weather_config *c) {
   state->rain_intensity = c->intensity;
   state->rain_target = c->intensity;
   float span = c->max_intensity - c->min_intensity;
   float relative = span > 0.0f ? (c->intensity - c->min_intensity) / span : 0.0f;
   state->weather_state = relative < 0.25f ? 0u : (relative < 0.75f ? 1u : 2u);
+  weather->samples = 0;
+}
+
+static void weather_init(noise_weather *weather, noise_state *state,
+                         const noise_weather_config *c, uint32_t seed) {
+  weather->rng = stream_seed(seed, 0x78dde6e4u);
+  weather_start(weather, state, c);
+}
+
+/* A changed intensity or vary setting restarts from it; otherwise the current
+   intensity and target stay, held within the new bounds while varying. */
+static void weather_configure(noise_weather *weather, noise_state *state,
+                              const noise_weather_config *previous,
+                              const noise_weather_config *c) {
   weather->period = (uint32_t)(c->step_s * NOISE_SAMPLE_RATE_HZ);
+  /* weather_next only steps when samples reaches period exactly. */
+  if (weather->samples >= weather->period) weather->samples = 0;
   weather->slew = -expm1f(-1.0f / (c->slew_s * NOISE_SAMPLE_RATE_HZ));
+  if (c->intensity != previous->intensity || c->vary != previous->vary) {
+    weather_start(weather, state, c);
+  } else if (c->vary) {
+    state->rain_intensity = fminf(c->max_intensity, fmaxf(c->min_intensity, state->rain_intensity));
+    state->rain_target = fminf(c->max_intensity, fmaxf(c->min_intensity, state->rain_target));
+  }
 }
 
 static void weather_next(noise_weather *weather, const noise_weather_config *c,
@@ -1325,9 +1340,12 @@ static void rain_config_default(noise_rain_config *c) {
   c->water.bubble_decay_max = 8.0f;
 }
 
-static void rain_init(noise_rain *rain, const noise_rain_config *c, uint32_t seed) {
+static void rain_init(noise_rain *rain, uint32_t seed) {
   rain->arrival_rng = stream_seed(seed, 0x3c6ef372u);
   rain->drop_rng = stream_seed(seed, 0xdaa66d2bu);
+}
+
+static void rain_configure(noise_rain *rain, const noise_rain_config *c) {
   float sum = 0.0f;
   for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) sum += c->surface_weight[i];
   float cumulative = 0.0f;
@@ -1554,6 +1572,16 @@ void noise_config_default(noise_config *c) {
   thunder_config_default(&c->thunder);
 }
 
+/* Derives every coefficient that depends on gen->config. */
+static void configure(noise_gen *gen, const noise_config *previous) {
+  const noise_config *c = &gen->config;
+  wind_configure(&gen->wind, &c->wind);
+  cicadas_configure(&gen->cicadas, &c->cicadas);
+  thunder_configure(&gen->thunder, &c->thunder);
+  weather_configure(&gen->weather, &gen->state, &previous->weather, &c->weather);
+  rain_configure(&gen->rain, &c->rain);
+}
+
 noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t seed) {
   if (!gen || !config_valid(config)) return NOISE_INVALID_CONFIG;
   noise_config copy = *config;
@@ -1566,8 +1594,17 @@ noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t see
   cicadas_init(&gen->cicadas, seed);
   thunder_init(&gen->thunder, seed);
   weather_init(&gen->weather, &gen->state, &gen->config.weather, seed);
-  rain_init(&gen->rain, &gen->config.rain, seed);
+  rain_init(&gen->rain, seed);
   reverb_init(&gen->reverb);
+  configure(gen, &gen->config);
+  return NOISE_OK;
+}
+
+noise_result noise_set_config(noise_gen *gen, const noise_config *config) {
+  if (!gen || !config_valid(config)) return NOISE_INVALID_CONFIG;
+  noise_config previous = gen->config;
+  gen->config = *config;
+  configure(gen, &previous);
   return NOISE_OK;
 }
 

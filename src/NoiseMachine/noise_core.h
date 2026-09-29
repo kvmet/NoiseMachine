@@ -360,8 +360,6 @@ typedef struct noise_wind {
   float gust_target;
   float air_alpha;
   float gust_alpha;
-  float brightness_cache;
-  float gust_rate_cache;
   uint32_t gust_samples;
 } noise_wind;
 
@@ -376,8 +374,6 @@ typedef struct noise_cicadas {
   unsigned started;
   noise_cicada_voice voice[NOISE_CICADA_VOICES];
   noise_resonator chorus[2]; /* Independent per ear. */
-  int species_cache;
-  float pitch_cache;
   float swell;
   float swell_target;
   uint32_t swell_samples;
@@ -387,7 +383,6 @@ typedef struct noise_cicadas {
 typedef struct noise_thunder_reverb {
   float buffer[NOISE_THUNDER_REVERB_SAMPLES];
   noise_fdn fdn;
-  float decay_cache;
   float input;
   unsigned phase;
   float output[2][2]; /* Previous and current quarter-rate outputs. */
@@ -435,6 +430,9 @@ typedef struct noise_gen {
 void noise_config_default(noise_config *config);
 /* Rejects invalid values without modifying gen. Seed zero aliases seed one. */
 noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t seed);
+/* Applies a new configuration while playing, keeping voices and random streams.
+   Rejects invalid values without modifying gen. Call between fills on the audio thread. */
+noise_result noise_set_config(noise_gen *gen, const noise_config *config);
 /* Starts an arrival at the listener. Call between fills on the audio thread. */
 noise_result noise_trigger_drop(noise_gen *gen, const droplet *drop);
 /* Starts a strike at the listener. Call between fills on the audio thread. */

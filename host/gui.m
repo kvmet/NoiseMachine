@@ -232,8 +232,6 @@ static OSStatus export_m4a(NSURL *url, const noise_config *config, uint32_t seed
   _Atomic(float) _strikeDistance;
   _Atomic(float) _strikeAngle;
   _Atomic(int) _strikeRequested;
-  float _appliedRainControl;
-  int _appliedVary;
   BOOL _playing;
 }
 
@@ -333,47 +331,18 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   config.rain.water.bubble_gain_max = [self controlValue:NoiseControlWaterBubbleGainMax];
   config.rain.water.bubble_decay_min = [self controlValue:NoiseControlWaterBubbleDecayMin];
   config.rain.water.bubble_decay_max = [self controlValue:NoiseControlWaterBubbleDecayMax];
+  if (config.weather.vary) {
+    config.weather.intensity = fminf(config.weather.max_intensity,
+        fmaxf(config.weather.min_intensity, config.weather.intensity));
+  }
   return config;
 }
 
 - (void)loadControlsIntoGenerator {
   noise_config config = [self configFromControls];
-  _generator.config = config;
-  uint32_t weatherPeriod = (uint32_t)(config.weather.step_s * NOISE_SAMPLE_RATE_HZ);
-  if (_generator.weather.samples >= weatherPeriod) _generator.weather.samples = 0;
-  _generator.weather.period = weatherPeriod;
-  _generator.weather.slew = -expm1f(-1.0f / (config.weather.slew_s * NOISE_SAMPLE_RATE_HZ));
-
-  float sum = 0.0f;
-  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) sum += config.rain.surface_weight[i];
-  float cumulative = 0.0f;
-  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
-    cumulative += config.rain.surface_weight[i];
-    _generator.rain.surface_cdf[i] = cumulative / sum;
-  }
-
-  float rain = config.weather.intensity;
-  if (rain != _appliedRainControl || config.weather.vary != _appliedVary) {
-    if (config.weather.vary) {
-      rain = fminf(config.weather.max_intensity, fmaxf(config.weather.min_intensity, rain));
-      float span = config.weather.max_intensity - config.weather.min_intensity;
-      float relative = span > 0.0f ? (rain - config.weather.min_intensity) / span : 0.0f;
-      _generator.state.weather_state = relative < 0.25f ? 0u : (relative < 0.75f ? 1u : 2u);
-      _generator.weather.samples = 0;
-    }
-    _generator.state.rain_intensity = rain;
-    _generator.state.rain_target = rain;
-    _appliedRainControl = config.weather.intensity;
-    _appliedVary = config.weather.vary;
-  } else if (!config.weather.vary) {
-    _generator.state.rain_intensity = rain;
-    _generator.state.rain_target = rain;
-  } else {
-    _generator.state.rain_intensity = fminf(config.weather.max_intensity,
-        fmaxf(config.weather.min_intensity, _generator.state.rain_intensity));
-    _generator.state.rain_target = fminf(config.weather.max_intensity,
-        fmaxf(config.weather.min_intensity, _generator.state.rain_target));
-  }
+  /* Controls load one atomic at a time, so a snapshot taken mid-edit can pair a new
+     minimum with an old maximum. The engine rejects it and the next callback applies. */
+  (void)noise_set_config(&_generator, &config);
 }
 
 - (OSStatus)renderFrames:(UInt32)frames into:(AudioBufferList *)buffers {
@@ -721,8 +690,6 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   if (resume) AudioOutputUnitStop(_audioUnit);
   noise_config config = [self configFromControls];
   noise_result result = noise_init(&_generator, &config, seed);
-  _appliedRainControl = config.weather.intensity;
-  _appliedVary = config.weather.vary;
   if (result != NOISE_OK) {
     _playing = NO;
     _playButton.title = @"Start";
@@ -791,8 +758,6 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   atomic_init(&_strikeDistance, defaults.thunder.min_distance_m);
   atomic_init(&_strikeAngle, 0.0f);
   atomic_init(&_strikeRequested, 0);
-  _appliedRainControl = defaults.weather.intensity;
-  _appliedVary = defaults.weather.vary;
 
   _window = [[NSWindow alloc]
       initWithContentRect:NSMakeRect(0.0, 0.0, 650.0, 770.0)

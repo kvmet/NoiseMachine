@@ -560,9 +560,17 @@ and leaves the engine unchanged. Do not render an uninitialized engine.
 `noise_fill` takes a count of stereo frames, writes twice that many
 interleaved int16 samples, and returns the frame count. A zero-frame call
 changes no state and may use a null output pointer. Other calls require
-valid storage. Configuration is immutable after initialization; do not
-mutate engine fields. The public `state` is for inspection by the owning
-thread.
+valid storage. Do not mutate engine fields. The public `state` is for
+inspection by the owning thread.
+
+`noise_set_config` applies a new configuration while playing. Voices,
+filters, and random streams continue. It validates like `noise_init` and
+leaves the engine unchanged on `NOISE_INVALID_CONFIG`. A changed initial
+intensity or `weather.vary` restarts the weather controller at that
+intensity. Otherwise the current intensity and target stay, clamped to the
+new bounds while varying. Distance, head, width, and surface changes apply
+to new drops and insect calls; sounding voices keep their spatial settings.
+Call it between fills on the audio thread.
 
 `noise_trigger_thunder` accepts a strike distance from 200 m to 15 km and an
 angle from negative 2π to positive 2π. Invalid strikes return
