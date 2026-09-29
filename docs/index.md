@@ -12,7 +12,7 @@ water bubble or two material modes. Their sum feeds the direct stereo path
 and a shared reverb. Crickets and cicadas use the same direct path and
 reverb. Thunder has its own reverb and limiter, then joins the direct mix.
 Ambient layers join the stereo mix after the reverb.
-`rain_gain` scales both direct rain and the reverb send. `master_gain` scales
+`rain.gain` scales both direct rain and the reverb send. `master_gain` scales
 the final output before conversion to PCM.
 
 Distances and radii use metres; velocity uses m/s; angles use radians;
@@ -27,8 +27,9 @@ formula below requires Pa when the other inputs use SI units.
 ## Ambient layers
 
 `ambient_gain` contains an independent linear gain for white noise, pink
-noise, 50 Hz hum, 60 Hz hum, wind, crickets, and cicadas. Each can be zero or
-combined with others. White noise, pink noise, and hum are identical in both
+noise, 50 Hz hum, and 60 Hz hum. Wind, crickets, and cicadas have their own
+`gain` in `wind`, `crickets`, and `cicadas`. Each can be zero or combined with
+others. White noise, pink noise, and hum are identical in both
 channels. The nature layers have independent stereo-width controls.
 
 White noise maps the upper 24 bits of a xorshift32 stream to the interval
@@ -134,7 +135,7 @@ Diameters are uniform within the selected bin. The largest bin ends at
 5.8 mm, the upper limit of the terminal-speed fit. Both interpolation and
 uniform sampling within bins are implementation choices.
 
-Each arrival independently samples a material using `surface_weight`.
+Each arrival independently samples a material using `rain.surface_weight`.
 Weights need not sum to one. The defaults are water 0.37, dirt 0.21,
 leaf 0.26, concrete 0.15, glass 0.005, and metal 0.005.
 Plastic, asphalt, and asphalt-roof weights default to zero.
@@ -184,8 +185,8 @@ with f uniform between 1 and 16 kHz and β = 2f. These frequency and damping
 choices follow [1, section 4.1.1]. This produces a brief impact impulse.
 The engine uses this temporal mode, not the paper's complete dipole field,
 water-hammer pressure amplitude, or geometry-dependent radiation model.
-Water impacts additionally sample `water_impact_gain_min` to
-`water_impact_gain_max`; other materials use gain one.
+Water impacts additionally sample `rain.water.impact_gain_min` to
+`rain.water.impact_gain_max`; other materials use gain one.
 
 ## Water bubbles
 
@@ -273,9 +274,9 @@ or file access occurs during rendering.
 
 ## Ear geometry and propagation delay
 
-`stereo_width_m` is the distance between ears or microphones. It defaults
-to 0.18 m and accepts 0 to 0.5 m. `head_amount` defaults to one; zero
-disables the head filter and diffraction. `rear_amount` independently
+`listener.stereo_width_m` is the distance between ears or microphones. It defaults
+to 0.18 m and accepts 0 to 0.5 m. `listener.head_amount` defaults to one; zero
+disables the head filter and diffraction. `listener.rear_amount` independently
 controls rear filtering. Both amounts accept 0 to 1.
 
 Angle zero is front, π/2 is right, π is behind, and negative π/2 is left.
@@ -489,11 +490,11 @@ It runs at a quarter of the sample rate, since thunder is mostly below
 2 kHz, and interpolates its output back up. Line lengths are 557, 719, 887,
 1063, 1297, and 1609 samples at 11025 Hz: 50 to 146 ms, an echo spacing
 like terrain. The loop low-pass has alpha 0.5, about 1.2 kHz.
-`thunder_reverb_decay_s` sets the time to fall 60 dB. The send is the
+`thunder.reverb_decay_s` sets the time to fall 60 dB. The send is the
 dry sum at unity; gain 0.5 puts the wet about 3 dB under the dry roll.
 
 Automatic strikes start one at time zero, then use a Bernoulli trial per
-frame at `thunder_rate_per_min / 60` per second. The comparison uses 32 bits,
+frame at `thunder.rate_per_min / 60` per second. The comparison uses 32 bits,
 so slow rates keep their resolution. Positions are uniform by area between
 the distance bounds, with uniform azimuth. Two voices can overlap. A strike
 that finds both busy is rejected and counted in `state.dropped_thunder`.
@@ -501,7 +502,7 @@ that finds both busy is rejected and counted in `state.dropped_thunder`.
 ## Weather controller
 
 Optional intensity variation uses a three-state Markov chain. At each
-`weather_step_s` interval, its transition probabilities are:
+`weather.step_s` interval, its transition probabilities are:
 
 - From light: light 0.85, heavy 0.15, very heavy 0.
 - From heavy: light 0.10, heavy 0.80, very heavy 0.10.
@@ -514,23 +515,23 @@ weather; transitions only move to adjacent states. At the default
 8 s interval, expected uninterrupted dwell times are about 53, 40,
 and 53 seconds. The first transition occurs after one full interval.
 
-The initial state is whichever target is closest to `rain_intensity`,
+The initial state is whichever target is closest to `weather.intensity`,
 with midpoint ties resolved upward. Actual intensity starts at the
 requested value and approaches the target once per audio frame:
 
-    α = 1 - exp(-1 / (rain_slew_s × sample_rate))
+    α = 1 - exp(-1 / (weather.slew_s × sample_rate))
     I[n+1] = I[n] + α(target - I[n])
 
 The default time constant is 2 s. This is an exponential approach,
 not a fixed-duration ramp. It changes arrival rate and size probabilities;
-existing drops retain their coefficients. With `vary_rain` disabled,
+existing drops retain their coefficients. With `weather.vary` disabled,
 intensity remains fixed. With both bounds zero, varying rain stays silent.
 The accumulator carries rounding error between frames so a slow transition
 does not stall when an individual step is smaller than a float can represent.
 
 ## Weather modulation
 
-`weather_mod_amount` routes the current rain intensity to sound parameters.
+`weather.mod_amount` routes the current rain intensity to sound parameters.
 Each amount is an attenuverter from -1 to 1. Zero disconnects a route, positive
 amounts follow intensity, and negative amounts invert it. Arrival rate and drop
 size default to 1 to preserve the basic rain model; all other routes default to
@@ -591,7 +592,7 @@ Configuration ranges are:
   gain: 0 to 1, default 0.5. Reverb decay: 0.5 to 10 s, default 3.5 s.
 - Initial, minimum, and maximum rain intensity: 0 to 1; minimum must not
   exceed maximum. Initial intensity must lie within bounds when varying.
-- `vary_rain`: 0 or 1.
+- `weather.vary`: 0 or 1.
 - Weather step: 0.1 to 3600 s. Slew time constant: 0.01 to 60 s.
 - Maximum arrival rate: 0 to 2000/s.
 - Material weights: 0 to 1000 each, at least one positive.

@@ -95,52 +95,52 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
 /* Listening settings the GUI opens with; the engine keeps its own defaults. */
 static void apply_startup_settings(noise_config *c) {
   memset(c->ambient_gain, 0, sizeof(c->ambient_gain));
-  c->ambient_gain[NOISE_KIND_WIND] = 0.10f;
-  c->ambient_gain[NOISE_KIND_CRICKETS] = 0.09f;
-  c->rain_gain = 0.91f;
+  c->wind.gain = 0.10f;
+  c->crickets.gain = 0.09f;
+  c->rain.gain = 0.91f;
   c->master_gain = 0.80f;
-  c->wind_brightness = 0.22f;
-  c->wind_gust_depth = 0.94f;
-  c->wind_gust_rate_hz = 0.19f;
-  c->wind_stereo_width = 0.78f;
-  c->cricket_call_rate_hz = 0.51f;
-  c->cricket_pitch_hz = 4500.0f;
-  c->cricket_pitch_variation = 0.24f;
-  c->cricket_stereo_width = 1.00f;
-  c->ambient_gain[NOISE_KIND_CICADAS] = 0.26f;
-  c->cicada_species = CICADA_HIGURASHI;
-  c->cicada_pitch_hz = 5000.0f;
-  c->cicada_click_rate_scale = 0.51f;
-  c->cicada_chorus = 0.69f;
-  c->cicada_stereo_width = 1.00f;
-  c->cicada_min_distance_m = 1.205f;
-  c->cicada_max_distance_m = 13.346f;
-  c->vary_rain = 1;
-  c->rain_intensity = 0.84f;
-  c->min_rain_intensity = 0.15f;
-  c->max_rain_intensity = 1.00f;
-  c->weather_step_s = 8.0f;
-  c->rain_slew_s = 2.0f;
-  c->max_drops_per_s = 2000.0f;
-  c->fall_height_m = 1000.0f;
-  c->surface_weight[WATER] = 6.05624e-05f;
-  c->surface_weight[DIRT] = 4.94011e-05f;
-  c->surface_weight[LEAF] = 3.04537e-06f;
-  c->surface_weight[CONCRETE] = 1.68416e-05f;
-  c->surface_weight[GLASS] = 2.29582e-07f;
-  c->surface_weight[METAL] = 2.68089e-07f;
-  c->surface_weight[PLASTIC] = 3.93724e-06f;
-  c->surface_weight[ASPHALT] = 0.002557f;
-  c->surface_weight[ASPHALT_ROOF] = 0.001559f;
-  c->water_impact_gain_min = 0.16f;
-  c->water_impact_gain_max = 0.50f;
-  c->water_bubble_probability = 0.51f;
-  c->water_bubble_radius_min_m = 0.00023f;
-  c->water_bubble_radius_max_m = 0.00069f;
-  c->water_bubble_gain_min = 0.36f;
-  c->water_bubble_gain_max = 2.50f;
-  c->water_bubble_decay_min = 0.31f;
-  c->water_bubble_decay_max = 0.58f;
+  c->wind.brightness = 0.22f;
+  c->wind.gust_depth = 0.94f;
+  c->wind.gust_rate_hz = 0.19f;
+  c->wind.stereo_width = 0.78f;
+  c->crickets.call_rate_hz = 0.51f;
+  c->crickets.pitch_hz = 4500.0f;
+  c->crickets.pitch_variation = 0.24f;
+  c->crickets.placement.stereo_width = 1.00f;
+  c->cicadas.gain = 0.26f;
+  c->cicadas.species = CICADA_HIGURASHI;
+  c->cicadas.pitch_hz = 5000.0f;
+  c->cicadas.click_rate_scale = 0.51f;
+  c->cicadas.chorus = 0.69f;
+  c->cicadas.placement.stereo_width = 1.00f;
+  c->cicadas.placement.min_distance_m = 1.205f;
+  c->cicadas.placement.max_distance_m = 13.346f;
+  c->weather.vary = 1;
+  c->weather.intensity = 0.84f;
+  c->weather.min_intensity = 0.15f;
+  c->weather.max_intensity = 1.00f;
+  c->weather.step_s = 8.0f;
+  c->weather.slew_s = 2.0f;
+  c->rain.max_drops_per_s = 2000.0f;
+  c->rain.fall_height_m = 1000.0f;
+  c->rain.surface_weight[WATER] = 6.05624e-05f;
+  c->rain.surface_weight[DIRT] = 4.94011e-05f;
+  c->rain.surface_weight[LEAF] = 3.04537e-06f;
+  c->rain.surface_weight[CONCRETE] = 1.68416e-05f;
+  c->rain.surface_weight[GLASS] = 2.29582e-07f;
+  c->rain.surface_weight[METAL] = 2.68089e-07f;
+  c->rain.surface_weight[PLASTIC] = 3.93724e-06f;
+  c->rain.surface_weight[ASPHALT] = 0.002557f;
+  c->rain.surface_weight[ASPHALT_ROOF] = 0.001559f;
+  c->rain.water.impact_gain_min = 0.16f;
+  c->rain.water.impact_gain_max = 0.50f;
+  c->rain.water.bubble_probability = 0.51f;
+  c->rain.water.bubble_radius_min_m = 0.00023f;
+  c->rain.water.bubble_radius_max_m = 0.00069f;
+  c->rain.water.bubble_gain_min = 0.36f;
+  c->rain.water.bubble_gain_max = 2.50f;
+  c->rain.water.bubble_decay_min = 0.31f;
+  c->rain.water.bubble_decay_max = 0.58f;
 }
 
 #define EXPORT_BATCH 4096u
@@ -256,123 +256,123 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   noise_config_default(&config);
   config.ambient_gain[NOISE_KIND_WHITE] = [self controlValue:NoiseControlWhite];
   config.ambient_gain[NOISE_KIND_PINK] = [self controlValue:NoiseControlPink];
-  config.ambient_gain[HUM_50HZ] = [self controlValue:NoiseControlHum50];
-  config.ambient_gain[HUM_60HZ] = [self controlValue:NoiseControlHum60];
-  config.ambient_gain[NOISE_KIND_WIND] = [self controlValue:NoiseControlWindGain];
-  config.wind_brightness = [self controlValue:NoiseControlWindBrightness];
-  config.wind_gust_depth = [self controlValue:NoiseControlWindGustDepth];
-  config.wind_gust_rate_hz = [self controlValue:NoiseControlWindGustRate];
-  config.wind_stereo_width = [self controlValue:NoiseControlWindWidth];
-  config.ambient_gain[NOISE_KIND_CRICKETS] = [self controlValue:NoiseControlCricketGain];
-  config.cricket_call_rate_hz = [self controlValue:NoiseControlCricketCallRate];
-  config.cricket_pitch_hz = [self controlValue:NoiseControlCricketPitch];
-  config.cricket_pitch_variation = [self controlValue:NoiseControlCricketPitchVariation];
-  config.cricket_stereo_width = [self controlValue:NoiseControlCricketWidth];
-  config.cricket_min_distance_m = [self controlValue:NoiseControlCricketMinDistance];
-  config.cricket_max_distance_m = [self controlValue:NoiseControlCricketMaxDistance];
-  config.ambient_gain[NOISE_KIND_CICADAS] = [self controlValue:NoiseControlCicadaGain];
-  config.cicada_pitch_hz = [self controlValue:NoiseControlCicadaPitch];
-  config.cicada_species =
+  config.ambient_gain[NOISE_KIND_HUM_50HZ] = [self controlValue:NoiseControlHum50];
+  config.ambient_gain[NOISE_KIND_HUM_60HZ] = [self controlValue:NoiseControlHum60];
+  config.wind.gain = [self controlValue:NoiseControlWindGain];
+  config.wind.brightness = [self controlValue:NoiseControlWindBrightness];
+  config.wind.gust_depth = [self controlValue:NoiseControlWindGustDepth];
+  config.wind.gust_rate_hz = [self controlValue:NoiseControlWindGustRate];
+  config.wind.stereo_width = [self controlValue:NoiseControlWindWidth];
+  config.crickets.gain = [self controlValue:NoiseControlCricketGain];
+  config.crickets.call_rate_hz = [self controlValue:NoiseControlCricketCallRate];
+  config.crickets.pitch_hz = [self controlValue:NoiseControlCricketPitch];
+  config.crickets.pitch_variation = [self controlValue:NoiseControlCricketPitchVariation];
+  config.crickets.placement.stereo_width = [self controlValue:NoiseControlCricketWidth];
+  config.crickets.placement.min_distance_m = [self controlValue:NoiseControlCricketMinDistance];
+  config.crickets.placement.max_distance_m = [self controlValue:NoiseControlCricketMaxDistance];
+  config.cicadas.gain = [self controlValue:NoiseControlCicadaGain];
+  config.cicadas.pitch_hz = [self controlValue:NoiseControlCicadaPitch];
+  config.cicadas.species =
       (cicada_species)atomic_load_explicit(&_cicadaSpecies, memory_order_relaxed);
-  config.cicada_click_rate_scale = [self controlValue:NoiseControlCicadaClickRate];
-  config.cicada_chorus = [self controlValue:NoiseControlCicadaChorus];
-  config.cicada_stereo_width = [self controlValue:NoiseControlCicadaWidth];
-  config.cicada_min_distance_m = [self controlValue:NoiseControlCicadaMinDistance];
-  config.cicada_max_distance_m = [self controlValue:NoiseControlCicadaMaxDistance];
-  config.thunder_gain = [self controlValue:NoiseControlThunderGain];
-  config.thunder_rate_per_min = [self controlValue:NoiseControlThunderRate];
-  config.thunder_min_distance_m = [self controlValue:NoiseControlThunderMinDistance];
-  config.thunder_max_distance_m = [self controlValue:NoiseControlThunderMaxDistance];
-  config.thunder_reverb_gain = [self controlValue:NoiseControlThunderReverbGain];
-  config.thunder_reverb_decay_s = [self controlValue:NoiseControlThunderReverbDecay];
-  config.rain_gain = [self controlValue:NoiseControlRainGain];
+  config.cicadas.click_rate_scale = [self controlValue:NoiseControlCicadaClickRate];
+  config.cicadas.chorus = [self controlValue:NoiseControlCicadaChorus];
+  config.cicadas.placement.stereo_width = [self controlValue:NoiseControlCicadaWidth];
+  config.cicadas.placement.min_distance_m = [self controlValue:NoiseControlCicadaMinDistance];
+  config.cicadas.placement.max_distance_m = [self controlValue:NoiseControlCicadaMaxDistance];
+  config.thunder.gain = [self controlValue:NoiseControlThunderGain];
+  config.thunder.rate_per_min = [self controlValue:NoiseControlThunderRate];
+  config.thunder.min_distance_m = [self controlValue:NoiseControlThunderMinDistance];
+  config.thunder.max_distance_m = [self controlValue:NoiseControlThunderMaxDistance];
+  config.thunder.reverb_gain = [self controlValue:NoiseControlThunderReverbGain];
+  config.thunder.reverb_decay_s = [self controlValue:NoiseControlThunderReverbDecay];
+  config.rain.gain = [self controlValue:NoiseControlRainGain];
   config.master_gain = [self controlValue:NoiseControlMaster];
-  config.rain_intensity = [self controlValue:NoiseControlRainIntensity];
-  config.min_rain_intensity = [self controlValue:NoiseControlMinRain];
-  config.max_rain_intensity = [self controlValue:NoiseControlMaxRain];
-  config.vary_rain = atomic_load_explicit(&_varyRain, memory_order_relaxed);
-  config.weather_step_s = [self controlValue:NoiseControlWeatherStep];
-  config.rain_slew_s = [self controlValue:NoiseControlRainSlew];
-  config.max_drops_per_s = [self controlValue:NoiseControlDropRate];
-  config.fall_height_m = [self controlValue:NoiseControlFallHeight];
+  config.weather.intensity = [self controlValue:NoiseControlRainIntensity];
+  config.weather.min_intensity = [self controlValue:NoiseControlMinRain];
+  config.weather.max_intensity = [self controlValue:NoiseControlMaxRain];
+  config.weather.vary = atomic_load_explicit(&_varyRain, memory_order_relaxed);
+  config.weather.step_s = [self controlValue:NoiseControlWeatherStep];
+  config.weather.slew_s = [self controlValue:NoiseControlRainSlew];
+  config.rain.max_drops_per_s = [self controlValue:NoiseControlDropRate];
+  config.rain.fall_height_m = [self controlValue:NoiseControlFallHeight];
   for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
-    config.surface_weight[i] = [self controlValue:NoiseControlWaterWeight + i];
+    config.rain.surface_weight[i] = [self controlValue:NoiseControlWaterWeight + i];
   }
-  config.min_distance_m = [self controlValue:NoiseControlMinDistance];
-  config.max_distance_m = [self controlValue:NoiseControlMaxDistance];
-  config.stereo_width_m = [self controlValue:NoiseControlStereoWidth];
-  config.head_amount = [self controlValue:NoiseControlHead];
-  config.rear_amount = [self controlValue:NoiseControlRear];
+  config.rain.min_distance_m = [self controlValue:NoiseControlMinDistance];
+  config.rain.max_distance_m = [self controlValue:NoiseControlMaxDistance];
+  config.listener.stereo_width_m = [self controlValue:NoiseControlStereoWidth];
+  config.listener.head_amount = [self controlValue:NoiseControlHead];
+  config.listener.rear_amount = [self controlValue:NoiseControlRear];
   config.reverb_gain = [self controlValue:NoiseControlReverb];
-  config.weather_mod_amount[WEATHER_MOD_ARRIVAL_RATE] =
+  config.weather.mod_amount[WEATHER_MOD_ARRIVAL_RATE] =
       [self controlValue:NoiseControlModArrival];
-  config.weather_mod_amount[WEATHER_MOD_DROP_SIZE] =
+  config.weather.mod_amount[WEATHER_MOD_DROP_SIZE] =
       [self controlValue:NoiseControlModSize];
-  config.weather_mod_amount[WEATHER_MOD_RAIN_GAIN] =
+  config.weather.mod_amount[WEATHER_MOD_RAIN_GAIN] =
       [self controlValue:NoiseControlModRainGain];
-  config.weather_mod_amount[WEATHER_MOD_REVERB_GAIN] =
+  config.weather.mod_amount[WEATHER_MOD_REVERB_GAIN] =
       [self controlValue:NoiseControlModReverb];
-  config.weather_mod_amount[WEATHER_MOD_FALL_HEIGHT] =
+  config.weather.mod_amount[WEATHER_MOD_FALL_HEIGHT] =
       [self controlValue:NoiseControlModFallHeight];
-  config.weather_mod_amount[WEATHER_MOD_MIN_DISTANCE] =
+  config.weather.mod_amount[WEATHER_MOD_MIN_DISTANCE] =
       [self controlValue:NoiseControlModMinDistance];
-  config.weather_mod_amount[WEATHER_MOD_MAX_DISTANCE] =
+  config.weather.mod_amount[WEATHER_MOD_MAX_DISTANCE] =
       [self controlValue:NoiseControlModMaxDistance];
   for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
-    config.weather_mod_amount[WEATHER_MOD_WATER_WEIGHT + i] =
+    config.weather.mod_amount[WEATHER_MOD_WATER_WEIGHT + i] =
         [self controlValue:NoiseControlModWater + i];
   }
-  config.water_impact_gain_min = [self controlValue:NoiseControlWaterImpactMin];
-  config.water_impact_gain_max = [self controlValue:NoiseControlWaterImpactMax];
-  config.water_bubble_probability = [self controlValue:NoiseControlWaterBubbleProbability];
-  config.water_bubble_radius_min_m =
+  config.rain.water.impact_gain_min = [self controlValue:NoiseControlWaterImpactMin];
+  config.rain.water.impact_gain_max = [self controlValue:NoiseControlWaterImpactMax];
+  config.rain.water.bubble_probability = [self controlValue:NoiseControlWaterBubbleProbability];
+  config.rain.water.bubble_radius_min_m =
       0.001f * [self controlValue:NoiseControlWaterBubbleRadiusMin];
-  config.water_bubble_radius_max_m =
+  config.rain.water.bubble_radius_max_m =
       0.001f * [self controlValue:NoiseControlWaterBubbleRadiusMax];
-  config.water_bubble_gain_min = [self controlValue:NoiseControlWaterBubbleGainMin];
-  config.water_bubble_gain_max = [self controlValue:NoiseControlWaterBubbleGainMax];
-  config.water_bubble_decay_min = [self controlValue:NoiseControlWaterBubbleDecayMin];
-  config.water_bubble_decay_max = [self controlValue:NoiseControlWaterBubbleDecayMax];
+  config.rain.water.bubble_gain_min = [self controlValue:NoiseControlWaterBubbleGainMin];
+  config.rain.water.bubble_gain_max = [self controlValue:NoiseControlWaterBubbleGainMax];
+  config.rain.water.bubble_decay_min = [self controlValue:NoiseControlWaterBubbleDecayMin];
+  config.rain.water.bubble_decay_max = [self controlValue:NoiseControlWaterBubbleDecayMax];
   return config;
 }
 
 - (void)loadControlsIntoGenerator {
   noise_config config = [self configFromControls];
   _generator.config = config;
-  uint32_t weatherPeriod = (uint32_t)(config.weather_step_s * NOISE_SAMPLE_RATE_HZ);
-  if (_generator.weather_samples >= weatherPeriod) _generator.weather_samples = 0;
-  _generator.weather_period = weatherPeriod;
-  _generator.rain_slew = -expm1f(-1.0f / (config.rain_slew_s * NOISE_SAMPLE_RATE_HZ));
+  uint32_t weatherPeriod = (uint32_t)(config.weather.step_s * NOISE_SAMPLE_RATE_HZ);
+  if (_generator.weather.samples >= weatherPeriod) _generator.weather.samples = 0;
+  _generator.weather.period = weatherPeriod;
+  _generator.weather.slew = -expm1f(-1.0f / (config.weather.slew_s * NOISE_SAMPLE_RATE_HZ));
 
   float sum = 0.0f;
-  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) sum += config.surface_weight[i];
+  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) sum += config.rain.surface_weight[i];
   float cumulative = 0.0f;
   for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
-    cumulative += config.surface_weight[i];
-    _generator.surface_cdf[i] = cumulative / sum;
+    cumulative += config.rain.surface_weight[i];
+    _generator.rain.surface_cdf[i] = cumulative / sum;
   }
 
-  float rain = config.rain_intensity;
-  if (rain != _appliedRainControl || config.vary_rain != _appliedVary) {
-    if (config.vary_rain) {
-      rain = fminf(config.max_rain_intensity, fmaxf(config.min_rain_intensity, rain));
-      float span = config.max_rain_intensity - config.min_rain_intensity;
-      float relative = span > 0.0f ? (rain - config.min_rain_intensity) / span : 0.0f;
+  float rain = config.weather.intensity;
+  if (rain != _appliedRainControl || config.weather.vary != _appliedVary) {
+    if (config.weather.vary) {
+      rain = fminf(config.weather.max_intensity, fmaxf(config.weather.min_intensity, rain));
+      float span = config.weather.max_intensity - config.weather.min_intensity;
+      float relative = span > 0.0f ? (rain - config.weather.min_intensity) / span : 0.0f;
       _generator.state.weather_state = relative < 0.25f ? 0u : (relative < 0.75f ? 1u : 2u);
-      _generator.weather_samples = 0;
+      _generator.weather.samples = 0;
     }
     _generator.state.rain_intensity = rain;
     _generator.state.rain_target = rain;
-    _appliedRainControl = config.rain_intensity;
-    _appliedVary = config.vary_rain;
-  } else if (!config.vary_rain) {
+    _appliedRainControl = config.weather.intensity;
+    _appliedVary = config.weather.vary;
+  } else if (!config.weather.vary) {
     _generator.state.rain_intensity = rain;
     _generator.state.rain_target = rain;
   } else {
-    _generator.state.rain_intensity = fminf(config.max_rain_intensity,
-        fmaxf(config.min_rain_intensity, _generator.state.rain_intensity));
-    _generator.state.rain_target = fminf(config.max_rain_intensity,
-        fmaxf(config.min_rain_intensity, _generator.state.rain_target));
+    _generator.state.rain_intensity = fminf(config.weather.max_intensity,
+        fmaxf(config.weather.min_intensity, _generator.state.rain_intensity));
+    _generator.state.rain_target = fminf(config.weather.max_intensity,
+        fmaxf(config.weather.min_intensity, _generator.state.rain_target));
   }
 }
 
@@ -721,8 +721,8 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   if (resume) AudioOutputUnitStop(_audioUnit);
   noise_config config = [self configFromControls];
   noise_result result = noise_init(&_generator, &config, seed);
-  _appliedRainControl = config.rain_intensity;
-  _appliedVary = config.vary_rain;
+  _appliedRainControl = config.weather.intensity;
+  _appliedVary = config.weather.vary;
   if (result != NOISE_OK) {
     _playing = NO;
     _playButton.title = @"Start";
@@ -786,13 +786,13 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
     [NSApp terminate:nil];
     return;
   }
-  atomic_init(&_varyRain, defaults.vary_rain);
-  atomic_init(&_cicadaSpecies, (int)defaults.cicada_species);
-  atomic_init(&_strikeDistance, defaults.thunder_min_distance_m);
+  atomic_init(&_varyRain, defaults.weather.vary);
+  atomic_init(&_cicadaSpecies, (int)defaults.cicadas.species);
+  atomic_init(&_strikeDistance, defaults.thunder.min_distance_m);
   atomic_init(&_strikeAngle, 0.0f);
   atomic_init(&_strikeRequested, 0);
-  _appliedRainControl = defaults.rain_intensity;
-  _appliedVary = defaults.vary_rain;
+  _appliedRainControl = defaults.weather.intensity;
+  _appliedVary = defaults.weather.vary;
 
   _window = [[NSWindow alloc]
       initWithContentRect:NSMakeRect(0.0, 0.0, 650.0, 770.0)
@@ -815,11 +815,11 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
       [self sliderRow:@"Pink noise gain" control:NoiseControlPink
                  value:defaults.ambient_gain[NOISE_KIND_PINK] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"50 Hz hum gain" control:NoiseControlHum50
-                 value:defaults.ambient_gain[HUM_50HZ] minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.ambient_gain[NOISE_KIND_HUM_50HZ] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"60 Hz hum gain" control:NoiseControlHum60
-                 value:defaults.ambient_gain[HUM_60HZ] minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.ambient_gain[NOISE_KIND_HUM_60HZ] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Rain gain" control:NoiseControlRainGain
-                 value:defaults.rain_gain minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.rain.gain minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Master gain" control:NoiseControlMaster
                  value:defaults.master_gain minimum:0 maximum:1 logarithmic:NO]
   ]];
@@ -827,16 +827,16 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   NSView *wind = [self tabViewWithRows:@[
       [self sectionLabel:@"Synthesized wind"],
       [self sliderRow:@"Gain" control:NoiseControlWindGain
-                 value:defaults.ambient_gain[NOISE_KIND_WIND]
+                 value:defaults.wind.gain
                minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Brightness" control:NoiseControlWindBrightness
-                 value:defaults.wind_brightness minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.wind.brightness minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Gust depth" control:NoiseControlWindGustDepth
-                 value:defaults.wind_gust_depth minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.wind.gust_depth minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Gust rate (Hz)" control:NoiseControlWindGustRate
-                 value:defaults.wind_gust_rate_hz minimum:0.01 maximum:2 logarithmic:YES],
+                 value:defaults.wind.gust_rate_hz minimum:0.01 maximum:2 logarithmic:YES],
       [self sliderRow:@"Stereo width" control:NoiseControlWindWidth
-                 value:defaults.wind_stereo_width minimum:0 maximum:1 logarithmic:NO]
+                 value:defaults.wind.stereo_width minimum:0 maximum:1 logarithmic:NO]
   ]];
 
   NSTextField *speciesLabel = [NSTextField labelWithString:@"Species"];
@@ -844,7 +844,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   [speciesLabel.widthAnchor constraintEqualToConstant:145.0].active = YES;
   NSPopUpButton *speciesMenu = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
   [speciesMenu addItemsWithTitles:@[@"Dog-day", @"Minminzemi", @"Higurashi"]];
-  [speciesMenu selectItemAtIndex:defaults.cicada_species];
+  [speciesMenu selectItemAtIndex:defaults.cicadas.species];
   speciesMenu.target = self;
   speciesMenu.action = @selector(cicadaSpeciesChanged:);
   NSStackView *cicadaSpeciesRow = [NSStackView stackViewWithViews:@[speciesLabel, speciesMenu]];
@@ -854,37 +854,37 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   NSView *insects = [self tabViewWithRows:@[
       [self sectionLabel:@"Crickets"],
       [self sliderRow:@"Gain" control:NoiseControlCricketGain
-                 value:defaults.ambient_gain[NOISE_KIND_CRICKETS]
+                 value:defaults.crickets.gain
                minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Chirps/s each" control:NoiseControlCricketCallRate
-                 value:defaults.cricket_call_rate_hz minimum:0.05 maximum:10 logarithmic:YES],
+                 value:defaults.crickets.call_rate_hz minimum:0.05 maximum:10 logarithmic:YES],
       [self sliderRow:@"Pitch (Hz)" control:NoiseControlCricketPitch
-                 value:defaults.cricket_pitch_hz minimum:2000 maximum:8000 logarithmic:YES],
+                 value:defaults.crickets.pitch_hz minimum:2000 maximum:8000 logarithmic:YES],
       [self sliderRow:@"Pitch variation" control:NoiseControlCricketPitchVariation
-                 value:defaults.cricket_pitch_variation minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.crickets.pitch_variation minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Angular spread" control:NoiseControlCricketWidth
-                 value:defaults.cricket_stereo_width minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.crickets.placement.stereo_width minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Min distance (m)" control:NoiseControlCricketMinDistance
-                 value:defaults.cricket_min_distance_m minimum:0.25 maximum:100 logarithmic:YES],
+                 value:defaults.crickets.placement.min_distance_m minimum:0.25 maximum:100 logarithmic:YES],
       [self sliderRow:@"Max distance (m)" control:NoiseControlCricketMaxDistance
-                 value:defaults.cricket_max_distance_m minimum:0.25 maximum:100 logarithmic:YES],
+                 value:defaults.crickets.placement.max_distance_m minimum:0.25 maximum:100 logarithmic:YES],
       [self sectionLabel:@"Cicadas"],
       cicadaSpeciesRow,
       [self sliderRow:@"Gain" control:NoiseControlCicadaGain
-                 value:defaults.ambient_gain[NOISE_KIND_CICADAS]
+                 value:defaults.cicadas.gain
                minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Pitch (Hz)" control:NoiseControlCicadaPitch
-                 value:defaults.cicada_pitch_hz minimum:2000 maximum:10000 logarithmic:YES],
+                 value:defaults.cicadas.pitch_hz minimum:2000 maximum:10000 logarithmic:YES],
       [self sliderRow:@"Click rate ×" control:NoiseControlCicadaClickRate
-                 value:defaults.cicada_click_rate_scale minimum:0.5 maximum:1.5 logarithmic:NO],
+                 value:defaults.cicadas.click_rate_scale minimum:0.5 maximum:1.5 logarithmic:NO],
       [self sliderRow:@"Distant chorus" control:NoiseControlCicadaChorus
-                 value:defaults.cicada_chorus minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.cicadas.chorus minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Angular spread" control:NoiseControlCicadaWidth
-                 value:defaults.cicada_stereo_width minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.cicadas.placement.stereo_width minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Min distance (m)" control:NoiseControlCicadaMinDistance
-                 value:defaults.cicada_min_distance_m minimum:0.25 maximum:100 logarithmic:YES],
+                 value:defaults.cicadas.placement.min_distance_m minimum:0.25 maximum:100 logarithmic:YES],
       [self sliderRow:@"Max distance (m)" control:NoiseControlCicadaMaxDistance
-                 value:defaults.cicada_max_distance_m minimum:0.25 maximum:100 logarithmic:YES]
+                 value:defaults.cicadas.placement.max_distance_m minimum:0.25 maximum:100 logarithmic:YES]
   ]];
 
   NSButton *strikeButton = [NSButton buttonWithTitle:@"Strike"
@@ -892,25 +892,25 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   NSView *thunder = [self tabViewWithRows:@[
       [self sectionLabel:@"Thunder"],
       [self sliderRow:@"Gain" control:NoiseControlThunderGain
-                 value:defaults.thunder_gain minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.thunder.gain minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Strikes per minute" control:NoiseControlThunderRate
-                 value:defaults.thunder_rate_per_min minimum:0 maximum:20 logarithmic:NO],
+                 value:defaults.thunder.rate_per_min minimum:0 maximum:20 logarithmic:NO],
       [self sliderRow:@"Minimum distance (m)" control:NoiseControlThunderMinDistance
-                 value:defaults.thunder_min_distance_m
+                 value:defaults.thunder.min_distance_m
                minimum:200 maximum:15000 logarithmic:YES],
       [self sliderRow:@"Maximum distance (m)" control:NoiseControlThunderMaxDistance
-                 value:defaults.thunder_max_distance_m
+                 value:defaults.thunder.max_distance_m
                minimum:200 maximum:15000 logarithmic:YES],
       [self sliderRow:@"Reverb gain" control:NoiseControlThunderReverbGain
-                 value:defaults.thunder_reverb_gain minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.thunder.reverb_gain minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Reverb decay (s)" control:NoiseControlThunderReverbDecay
-                 value:defaults.thunder_reverb_decay_s minimum:0.5 maximum:10 logarithmic:YES],
+                 value:defaults.thunder.reverb_decay_s minimum:0.5 maximum:10 logarithmic:YES],
       strikeButton
   ]];
 
   _varyButton = [NSButton checkboxWithTitle:@"Vary rain automatically"
                                      target:self action:@selector(varyChanged:)];
-  _varyButton.state = defaults.vary_rain ? NSControlStateValueOn : NSControlStateValueOff;
+  _varyButton.state = defaults.weather.vary ? NSControlStateValueOn : NSControlStateValueOff;
   NSTextField *seedLabel = [NSTextField labelWithString:@"Seed"];
   seedLabel.alignment = NSTextAlignmentRight;
   [seedLabel.widthAnchor constraintEqualToConstant:145.0].active = YES;
@@ -928,52 +928,52 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
       _varyButton,
       [self sectionLabel:@"Weather"],
       [self sliderRow:@"Rain intensity" control:NoiseControlRainIntensity
-                 value:defaults.rain_intensity minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.weather.intensity minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Minimum intensity" control:NoiseControlMinRain
-                 value:defaults.min_rain_intensity minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.weather.min_intensity minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Maximum intensity" control:NoiseControlMaxRain
-                 value:defaults.max_rain_intensity minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.weather.max_intensity minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Weather interval (s)" control:NoiseControlWeatherStep
-                 value:defaults.weather_step_s minimum:0.1 maximum:3600 logarithmic:YES],
+                 value:defaults.weather.step_s minimum:0.1 maximum:3600 logarithmic:YES],
       [self sliderRow:@"Rain slew (s)" control:NoiseControlRainSlew
-                 value:defaults.rain_slew_s minimum:0.01 maximum:60 logarithmic:YES],
+                 value:defaults.weather.slew_s minimum:0.01 maximum:60 logarithmic:YES],
       [self sliderRow:@"Drops/s at full rain" control:NoiseControlDropRate
-                 value:defaults.max_drops_per_s minimum:0 maximum:2000 logarithmic:NO],
+                 value:defaults.rain.max_drops_per_s minimum:0 maximum:2000 logarithmic:NO],
       [self sliderRow:@"Fall height (m)" control:NoiseControlFallHeight
-                 value:defaults.fall_height_m minimum:0.01 maximum:1000 logarithmic:YES],
+                 value:defaults.rain.fall_height_m minimum:0.01 maximum:1000 logarithmic:YES],
       [self sectionLabel:@"Surface weights"],
       [self sliderRow:@"Water" control:NoiseControlWaterWeight
-                 value:defaults.surface_weight[WATER] minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.rain.surface_weight[WATER] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Dirt" control:NoiseControlDirtWeight
-                 value:defaults.surface_weight[DIRT] minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.rain.surface_weight[DIRT] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Leaf" control:NoiseControlLeafWeight
-                 value:defaults.surface_weight[LEAF] minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.rain.surface_weight[LEAF] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Concrete" control:NoiseControlConcreteWeight
-                 value:defaults.surface_weight[CONCRETE] minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.rain.surface_weight[CONCRETE] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Glass" control:NoiseControlGlassWeight
-                 value:defaults.surface_weight[GLASS] minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.rain.surface_weight[GLASS] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Metal" control:NoiseControlMetalWeight
-                 value:defaults.surface_weight[METAL] minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.rain.surface_weight[METAL] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Plastic" control:NoiseControlPlasticWeight
-                 value:defaults.surface_weight[PLASTIC] minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.rain.surface_weight[PLASTIC] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Asphalt" control:NoiseControlAsphaltWeight
-                 value:defaults.surface_weight[ASPHALT] minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.rain.surface_weight[ASPHALT] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Asphalt roof" control:NoiseControlAsphaltRoofWeight
-                 value:defaults.surface_weight[ASPHALT_ROOF] minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.rain.surface_weight[ASPHALT_ROOF] minimum:0 maximum:1 logarithmic:NO],
       seedRow
   ]];
 
   NSView *spatial = [self tabViewWithRows:@[
       [self sliderRow:@"Minimum distance (m)" control:NoiseControlMinDistance
-                 value:defaults.min_distance_m minimum:0.25 maximum:100 logarithmic:YES],
+                 value:defaults.rain.min_distance_m minimum:0.25 maximum:100 logarithmic:YES],
       [self sliderRow:@"Maximum distance (m)" control:NoiseControlMaxDistance
-                 value:defaults.max_distance_m minimum:0.25 maximum:100 logarithmic:YES],
+                 value:defaults.rain.max_distance_m minimum:0.25 maximum:100 logarithmic:YES],
       [self sliderRow:@"Stereo width (m)" control:NoiseControlStereoWidth
-                 value:defaults.stereo_width_m minimum:0 maximum:0.5 logarithmic:NO],
+                 value:defaults.listener.stereo_width_m minimum:0 maximum:0.5 logarithmic:NO],
       [self sliderRow:@"Head effect" control:NoiseControlHead
-                 value:defaults.head_amount minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.listener.head_amount minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Rear filter" control:NoiseControlRear
-                 value:defaults.rear_amount minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.listener.rear_amount minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Reverb gain" control:NoiseControlReverb
                  value:defaults.reverb_gain minimum:0 maximum:1 logarithmic:NO]
   ]];
@@ -981,78 +981,78 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   NSView *water = [self tabViewWithRows:@[
       [self sectionLabel:@"Random range per water drop"],
       [self sliderRow:@"Impact gain minimum" control:NoiseControlWaterImpactMin
-                 value:defaults.water_impact_gain_min minimum:0 maximum:2 logarithmic:NO],
+                 value:defaults.rain.water.impact_gain_min minimum:0 maximum:2 logarithmic:NO],
       [self sliderRow:@"Impact gain maximum" control:NoiseControlWaterImpactMax
-                 value:defaults.water_impact_gain_max minimum:0 maximum:2 logarithmic:NO],
+                 value:defaults.rain.water.impact_gain_max minimum:0 maximum:2 logarithmic:NO],
       [self sliderRow:@"Bubble probability" control:NoiseControlWaterBubbleProbability
-                 value:defaults.water_bubble_probability minimum:0 maximum:1 logarithmic:NO],
+                 value:defaults.rain.water.bubble_probability minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Bubble radius min (mm)" control:NoiseControlWaterBubbleRadiusMin
-                 value:1000.0 * defaults.water_bubble_radius_min_m
+                 value:1000.0 * defaults.rain.water.bubble_radius_min_m
                minimum:0.16 maximum:4 logarithmic:YES],
       [self sliderRow:@"Bubble radius max (mm)" control:NoiseControlWaterBubbleRadiusMax
-                 value:1000.0 * defaults.water_bubble_radius_max_m
+                 value:1000.0 * defaults.rain.water.bubble_radius_max_m
                minimum:0.16 maximum:4 logarithmic:YES],
       [self sliderRow:@"Bubble gain minimum" control:NoiseControlWaterBubbleGainMin
-                 value:defaults.water_bubble_gain_min minimum:0 maximum:8 logarithmic:NO],
+                 value:defaults.rain.water.bubble_gain_min minimum:0 maximum:8 logarithmic:NO],
       [self sliderRow:@"Bubble gain maximum" control:NoiseControlWaterBubbleGainMax
-                 value:defaults.water_bubble_gain_max minimum:0 maximum:8 logarithmic:NO],
+                 value:defaults.rain.water.bubble_gain_max minimum:0 maximum:8 logarithmic:NO],
       [self sliderRow:@"Decay scale minimum" control:NoiseControlWaterBubbleDecayMin
-                 value:defaults.water_bubble_decay_min minimum:0.25 maximum:20 logarithmic:YES],
+                 value:defaults.rain.water.bubble_decay_min minimum:0.25 maximum:20 logarithmic:YES],
       [self sliderRow:@"Decay scale maximum" control:NoiseControlWaterBubbleDecayMax
-                 value:defaults.water_bubble_decay_max minimum:0.25 maximum:20 logarithmic:YES]
+                 value:defaults.rain.water.bubble_decay_max minimum:0.25 maximum:20 logarithmic:YES]
   ]];
 
   NSView *weatherMod = [self tabViewWithRows:@[
       [self sectionLabel:@"Weather intensity attenuverters"],
       [NSTextField labelWithString:@"+ follows intensity     0 disconnects     - inverts"],
       [self sliderRow:@"Arrival density" control:NoiseControlModArrival
-                 value:defaults.weather_mod_amount[WEATHER_MOD_ARRIVAL_RATE]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_ARRIVAL_RATE]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Drop size" control:NoiseControlModSize
-                 value:defaults.weather_mod_amount[WEATHER_MOD_DROP_SIZE]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_DROP_SIZE]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Rain gain" control:NoiseControlModRainGain
-                 value:defaults.weather_mod_amount[WEATHER_MOD_RAIN_GAIN]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_RAIN_GAIN]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Reverb gain" control:NoiseControlModReverb
-                 value:defaults.weather_mod_amount[WEATHER_MOD_REVERB_GAIN]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_REVERB_GAIN]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Fall height" control:NoiseControlModFallHeight
-                 value:defaults.weather_mod_amount[WEATHER_MOD_FALL_HEIGHT]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_FALL_HEIGHT]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Minimum distance" control:NoiseControlModMinDistance
-                 value:defaults.weather_mod_amount[WEATHER_MOD_MIN_DISTANCE]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_MIN_DISTANCE]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Maximum distance" control:NoiseControlModMaxDistance
-                 value:defaults.weather_mod_amount[WEATHER_MOD_MAX_DISTANCE]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_MAX_DISTANCE]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sectionLabel:@"Surface weights"],
       [self sliderRow:@"Water" control:NoiseControlModWater
-                 value:defaults.weather_mod_amount[WEATHER_MOD_WATER_WEIGHT]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_WATER_WEIGHT]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Dirt" control:NoiseControlModDirt
-                 value:defaults.weather_mod_amount[WEATHER_MOD_DIRT_WEIGHT]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_DIRT_WEIGHT]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Leaf" control:NoiseControlModLeaf
-                 value:defaults.weather_mod_amount[WEATHER_MOD_LEAF_WEIGHT]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_LEAF_WEIGHT]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Concrete" control:NoiseControlModConcrete
-                 value:defaults.weather_mod_amount[WEATHER_MOD_CONCRETE_WEIGHT]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_CONCRETE_WEIGHT]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Glass" control:NoiseControlModGlass
-                 value:defaults.weather_mod_amount[WEATHER_MOD_GLASS_WEIGHT]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_GLASS_WEIGHT]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Metal" control:NoiseControlModMetal
-                 value:defaults.weather_mod_amount[WEATHER_MOD_METAL_WEIGHT]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_METAL_WEIGHT]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Plastic" control:NoiseControlModPlastic
-                 value:defaults.weather_mod_amount[WEATHER_MOD_PLASTIC_WEIGHT]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_PLASTIC_WEIGHT]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Asphalt" control:NoiseControlModAsphalt
-                 value:defaults.weather_mod_amount[WEATHER_MOD_ASPHALT_WEIGHT]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_ASPHALT_WEIGHT]
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Asphalt roof" control:NoiseControlModAsphaltRoof
-                 value:defaults.weather_mod_amount[WEATHER_MOD_ASPHALT_ROOF_WEIGHT]
+                 value:defaults.weather.mod_amount[WEATHER_MOD_ASPHALT_ROOF_WEIGHT]
                minimum:-1 maximum:1 logarithmic:NO]
   ]];
 

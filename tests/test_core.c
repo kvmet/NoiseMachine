@@ -16,7 +16,7 @@ static noise_config silent_config(void) {
   noise_config_default(&c);
   memset(c.ambient_gain, 0, sizeof(c.ambient_gain));
   c.reverb_gain = 0.0f;
-  c.thunder_reverb_gain = 0.0f;
+  c.thunder.reverb_gain = 0.0f;
   c.master_gain = 1.0f;
   return c;
 }
@@ -34,59 +34,59 @@ static void test_validation(void) {
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   assert(memcmp(&a, &b, sizeof(a)) == 0);
   c = silent_config();
-  c.surface_weight[WATER] = -1.0f;
+  c.rain.surface_weight[WATER] = -1.0f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  memset(c.surface_weight, 0, sizeof(c.surface_weight));
+  memset(c.rain.surface_weight, 0, sizeof(c.rain.surface_weight));
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.vary_rain = 1;
+  c.weather.vary = 1;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
-  c.rain_intensity = 0.5f;
-  c.min_rain_intensity = 0.9f;
-  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
-  c = silent_config();
-  c.max_drops_per_s = INFINITY;
+  c.weather.intensity = 0.5f;
+  c.weather.min_intensity = 0.9f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.weather_mod_amount[WEATHER_MOD_REVERB_GAIN] = 1.01f;
-  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
-  c.weather_mod_amount[WEATHER_MOD_REVERB_GAIN] = NAN;
+  c.rain.max_drops_per_s = INFINITY;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.water_impact_gain_min = 0.6f;
-  c.water_impact_gain_max = 0.5f;
+  c.weather.mod_amount[WEATHER_MOD_REVERB_GAIN] = 1.01f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c.weather.mod_amount[WEATHER_MOD_REVERB_GAIN] = NAN;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.water_bubble_radius_min_m = 0.002f;
-  c.water_bubble_radius_max_m = 0.001f;
+  c.rain.water.impact_gain_min = 0.6f;
+  c.rain.water.impact_gain_max = 0.5f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.water_bubble_decay_max = INFINITY;
+  c.rain.water.bubble_radius_min_m = 0.002f;
+  c.rain.water.bubble_radius_max_m = 0.001f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.wind_gust_rate_hz = 0.0f;
+  c.rain.water.bubble_decay_max = INFINITY;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.wind_stereo_width = 1.01f;
+  c.wind.gust_rate_hz = 0.0f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.cricket_call_rate_hz = 0.0f;
+  c.wind.stereo_width = 1.01f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.cricket_pitch_hz = 8001.0f;
+  c.crickets.call_rate_hz = 0.0f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.cicada_click_rate_scale = 1.6f;
+  c.crickets.pitch_hz = 8001.0f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.cicada_species = NOISE_CICADA_SPECIES_COUNT;
+  c.cicadas.click_rate_scale = 1.6f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.cicada_min_distance_m = 40.0f;
+  c.cicadas.species = NOISE_CICADA_SPECIES_COUNT;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.cicada_chorus = NAN;
+  c.cicadas.placement.min_distance_m = 40.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.cicadas.chorus = NAN;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   droplet drop = water_drop();
   drop.bubble_radius_m = 0.0001f;
@@ -108,16 +108,16 @@ static void test_silence_and_chunks(void) {
   assert(memcmp(&a, &b, sizeof(a)) == 0);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   for (unsigned i = 0; i < 2 * NOISE_SAMPLE_RATE_HZ; ++i) assert(audio[i] == 0);
-  c.rain_intensity = 0.7f;
-  c.vary_rain = 1;
-  c.weather_step_s = 0.1f;
+  c.weather.intensity = 0.7f;
+  c.weather.vary = 1;
+  c.weather.step_s = 0.1f;
   c.reverb_gain = 0.2f;
   c.ambient_gain[NOISE_KIND_PINK] = 0.2f;
-  c.ambient_gain[HUM_60HZ] = 0.1f;
-  c.ambient_gain[NOISE_KIND_WIND] = 0.1f;
-  c.ambient_gain[NOISE_KIND_CRICKETS] = 0.05f;
-  c.ambient_gain[NOISE_KIND_CICADAS] = 0.05f;
-  c.thunder_gain = 0.3f;
+  c.ambient_gain[NOISE_KIND_HUM_60HZ] = 0.1f;
+  c.wind.gain = 0.1f;
+  c.crickets.gain = 0.05f;
+  c.cicadas.gain = 0.05f;
+  c.thunder.gain = 0.3f;
   assert(noise_init(&a, &c, 0) == NOISE_OK);
   assert(noise_init(&b, &c, 1) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
@@ -155,12 +155,12 @@ static double spectral_amplitude(double frequency) {
 }
 
 static void test_hum(void) {
-  for (unsigned kind = HUM_50HZ; kind <= HUM_60HZ; ++kind) {
+  for (unsigned kind = NOISE_KIND_HUM_50HZ; kind <= NOISE_KIND_HUM_60HZ; ++kind) {
     noise_config c = silent_config();
     c.ambient_gain[kind] = 0.5f;
     assert(noise_init(&a, &c, 1) == NOISE_OK);
     noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
-    double frequency = kind == HUM_50HZ ? 50.0 : 60.0;
+    double frequency = kind == NOISE_KIND_HUM_50HZ ? 50.0 : 60.0;
     double fundamental = spectral_amplitude(frequency);
     assert(fabs(fundamental - 32767.0 * 0.5 / 1.42) < 2.0);
     assert(fabs(spectral_amplitude(2.0 * frequency) / fundamental - 0.3) < 0.001);
@@ -209,10 +209,10 @@ static void test_noise_spectra(void) {
 
 static void test_wind(void) {
   noise_config c = silent_config();
-  c.ambient_gain[NOISE_KIND_WIND] = 0.5f;
-  c.wind_gust_depth = 0.0f;
-  c.wind_brightness = 0.2f;
-  c.wind_stereo_width = 0.0f;
+  c.wind.gain = 0.5f;
+  c.wind.gust_depth = 0.0f;
+  c.wind.brightness = 0.2f;
+  c.wind.stereo_width = 0.0f;
   assert(noise_init(&a, &c, 17) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   int nonzero = 0;
@@ -223,14 +223,14 @@ static void test_wind(void) {
   assert(nonzero);
   double dark_high = band_power(6400);
 
-  c.wind_brightness = 1.0f;
+  c.wind.brightness = 1.0f;
   assert(noise_init(&a, &c, 17) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   assert(band_power(6400) > 20.0 * dark_high);
 
-  c.wind_stereo_width = 1.0f;
-  c.wind_gust_depth = 1.0f;
-  c.wind_gust_rate_hz = 2.0f;
+  c.wind.stereo_width = 1.0f;
+  c.wind.gust_depth = 1.0f;
+  c.wind.gust_rate_hz = 2.0f;
   assert(noise_init(&a, &c, 17) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   int stereo = 0;
@@ -238,16 +238,16 @@ static void test_wind(void) {
     stereo |= audio[2 * n] != audio[2 * n + 1];
   }
   assert(stereo);
-  assert(a.wind_gust != 0.5f);
+  assert(a.wind.gust != 0.5f);
   assert(a.state.clipped_samples == 0);
 }
 
 static void test_insects(void) {
   noise_config c = silent_config();
-  c.ambient_gain[NOISE_KIND_CRICKETS] = 0.7f;
-  c.cricket_call_rate_hz = 1.0f;
-  c.cricket_pitch_variation = 0.0f;
-  c.cricket_stereo_width = 0.0f;
+  c.crickets.gain = 0.7f;
+  c.crickets.call_rate_hz = 1.0f;
+  c.crickets.pitch_variation = 0.0f;
+  c.crickets.placement.stereo_width = 0.0f;
   assert(noise_init(&a, &c, 29) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   unsigned cricket_samples = 0;
@@ -257,7 +257,7 @@ static void test_insects(void) {
   }
   assert(cricket_samples > 1000 && cricket_samples < 15000);
 
-  c.cricket_stereo_width = 1.0f;
+  c.crickets.placement.stereo_width = 1.0f;
   assert(noise_init(&a, &c, 29) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   unsigned cricket_stereo = 0;
@@ -267,16 +267,16 @@ static void test_insects(void) {
   assert(cricket_stereo > 1000);
 
   c = silent_config();
-  c.ambient_gain[NOISE_KIND_CICADAS] = 0.7f;
-  c.cicada_chorus = 0.0f;
-  c.cicada_stereo_width = 0.0f;
+  c.cicadas.gain = 0.7f;
+  c.cicadas.chorus = 0.0f;
+  c.cicadas.placement.stereo_width = 0.0f;
   assert(noise_init(&a, &c, 29) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) {
     assert(audio[2 * n] == audio[2 * n + 1]);
   }
 
-  c.cicada_chorus = 0.5f;
+  c.cicadas.chorus = 0.5f;
   assert(noise_init(&a, &c, 29) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   unsigned cicada_stereo = 0;
@@ -289,22 +289,22 @@ static void test_insects(void) {
 
 static void test_cricket_rhythm(void) {
   noise_config c = silent_config();
-  c.ambient_gain[NOISE_KIND_CRICKETS] = 0.5f;
-  c.cricket_call_rate_hz = 2.0f;
-  c.cricket_pitch_variation = 1.0f;
-  c.cricket_stereo_width = 1.0f;
+  c.crickets.gain = 0.5f;
+  c.crickets.call_rate_hz = 2.0f;
+  c.crickets.pitch_variation = 1.0f;
+  c.crickets.placement.stereo_width = 1.0f;
   assert(noise_init(&a, &c, 5) == NOISE_OK);
   uint32_t last_onset[NOISE_CRICKET_VOICES] = {0};
   float pan[NOISE_CRICKET_VOICES] = {0};
   double shortest[NOISE_CRICKET_VOICES], longest[NOISE_CRICKET_VOICES] = {0};
   for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) shortest[i] = INFINITY;
   unsigned intervals = 0, singing = 0, checks = 0;
-  double gap = 1.5 * 1.1 * NOISE_SAMPLE_RATE_HZ / c.cricket_call_rate_hz;
+  double gap = 1.5 * 1.1 * NOISE_SAMPLE_RATE_HZ / c.crickets.call_rate_hz;
   for (uint32_t n = 1; n <= 600u * NOISE_SAMPLE_RATE_HZ; ++n) {
     int16_t frame[2];
     noise_fill(&a, frame, 1);
     for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) {
-      const noise_cricket_voice *v = &a.crickets[i];
+      const noise_cricket_voice *v = &a.crickets.voice[i];
       if (n % 4410u == 0) {
         singing += v->singing;
         ++checks;
@@ -333,15 +333,15 @@ static void test_cricket_rhythm(void) {
 
 static void test_cricket_pitch(void) {
   noise_config c = silent_config();
-  c.ambient_gain[NOISE_KIND_CRICKETS] = 0.5f;
-  c.cricket_call_rate_hz = 2.0f;
-  c.cricket_pitch_variation = 1.0f;
-  c.cricket_stereo_width = 0.0f;
+  c.crickets.gain = 0.5f;
+  c.crickets.call_rate_hz = 2.0f;
+  c.crickets.pitch_variation = 1.0f;
+  c.crickets.placement.stereo_width = 0.0f;
   assert(noise_init(&a, &c, 7) == NOISE_OK);
   noise_fill(&a, audio, 1);
   for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) {
-    a.crickets[i].singing = i == 0;
-    a.crickets[i].bout_samples = UINT32_MAX;
+    a.crickets.voice[i].singing = i == 0;
+    a.crickets.voice[i].bout_samples = UINT32_MAX;
   }
   double start_low = INFINITY, start_high = 0.0, drop = 0.0;
   unsigned pulses = 0;
@@ -405,34 +405,34 @@ static double cricket_energy(noise_config c, unsigned seconds) {
 
 static void test_cricket_space(void) {
   noise_config c = silent_config();
-  c.ambient_gain[NOISE_KIND_CRICKETS] = 1.0f;
-  c.cricket_call_rate_hz = 2.0f;
-  c.cricket_stereo_width = 0.0f;
-  c.cricket_min_distance_m = 2.0f;
-  c.cricket_max_distance_m = 2.0f;
+  c.crickets.gain = 1.0f;
+  c.crickets.call_rate_hz = 2.0f;
+  c.crickets.placement.stereo_width = 0.0f;
+  c.crickets.placement.min_distance_m = 2.0f;
+  c.crickets.placement.max_distance_m = 2.0f;
   double near = cricket_energy(c, 10);
-  c.cricket_min_distance_m = 16.0f;
-  c.cricket_max_distance_m = 16.0f;
+  c.crickets.placement.min_distance_m = 16.0f;
+  c.crickets.placement.max_distance_m = 16.0f;
   double far = cricket_energy(c, 10);
   /* 1/r level: 8x the distance is 64x less energy. */
   assert(near / far > 50.0 && near / far < 80.0);
 
-  c.cricket_min_distance_m = 16.0f;
+  c.crickets.placement.min_distance_m = 16.0f;
   c.reverb_gain = 0.5f;
   double wet = cricket_energy(c, 10);
   assert(wet > 2.0 * far);
 
   c.reverb_gain = 0.0f;
-  c.cricket_stereo_width = 1.0f;
-  c.cricket_min_distance_m = 2.0f;
-  c.cricket_max_distance_m = 2.0f;
+  c.crickets.placement.stereo_width = 1.0f;
+  c.crickets.placement.min_distance_m = 2.0f;
+  c.crickets.placement.max_distance_m = 2.0f;
   assert(noise_init(&a, &c, 11) == NOISE_OK);
   noise_fill(&a, audio, 1);
   for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) {
-    a.crickets[i].singing = i == 0;
-    a.crickets[i].bout_samples = UINT32_MAX;
+    a.crickets.voice[i].singing = i == 0;
+    a.crickets.voice[i].bout_samples = UINT32_MAX;
   }
-  a.crickets[0].angle_offset = -0.5f;
+  a.crickets.voice[0].angle_offset = -0.5f;
   double ear[2] = {0.0, 0.0};
   for (unsigned second = 0; second < 3; ++second) {
     noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
@@ -473,20 +473,20 @@ static double ring_frequency(void) {
 static void solo_cicada(noise_config c, uint32_t hold_frames) {
   assert(noise_init(&a, &c, 13) == NOISE_OK);
   noise_fill(&a, audio, 1);
-  for (unsigned i = 1; i < NOISE_CICADA_VOICES; ++i) a.cicadas[i].until_call = UINT32_MAX;
+  for (unsigned i = 1; i < NOISE_CICADA_VOICES; ++i) a.cicadas.voice[i].until_call = UINT32_MAX;
   if (hold_frames) {
-    assert(a.cicadas[0].holding);
-    a.cicadas[0].note_length = a.cicadas[0].sounding = hold_frames;
+    assert(a.cicadas.voice[0].holding);
+    a.cicadas.voice[0].note_length = a.cicadas.voice[0].sounding = hold_frames;
   }
 }
 
 static void test_cicada_buzz(void) {
   noise_config c = silent_config();
-  c.ambient_gain[NOISE_KIND_CICADAS] = 1.0f;
-  c.cicada_chorus = 0.0f;
-  c.cicada_stereo_width = 0.0f;
-  c.cicada_min_distance_m = 5.0f;
-  c.cicada_max_distance_m = 5.0f;
+  c.cicadas.gain = 1.0f;
+  c.cicadas.chorus = 0.0f;
+  c.cicadas.placement.stereo_width = 0.0f;
+  c.cicadas.placement.min_distance_m = 5.0f;
+  c.cicadas.placement.max_distance_m = 5.0f;
   solo_cicada(c, 20u * NOISE_SAMPLE_RATE_HZ);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ); /* Past the swell. */
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
@@ -528,8 +528,8 @@ static void test_cicada_buzz(void) {
 
 static void test_cicada_calls(void) {
   noise_config c = silent_config();
-  c.ambient_gain[NOISE_KIND_CICADAS] = 0.5f;
-  c.cicada_chorus = 0.0f;
+  c.cicadas.gain = 0.5f;
+  c.cicadas.chorus = 0.0f;
   assert(noise_init(&a, &c, 17) == NOISE_OK);
   uint32_t start[NOISE_CICADA_VOICES] = {0};
   unsigned calls = 0, calling = 0, checks = 0;
@@ -537,7 +537,7 @@ static void test_cicada_calls(void) {
     int16_t frame[2];
     noise_fill(&a, frame, 1);
     for (unsigned i = 0; i < NOISE_CICADA_VOICES; ++i) {
-      const noise_cicada_voice *v = &a.cicadas[i];
+      const noise_cicada_voice *v = &a.cicadas.voice[i];
       if (v->note_length && v->note_samples == 1) start[i] = n;
       if (!v->note_length && start[i]) {
         double seconds = (double)(n - start[i]) / NOISE_SAMPLE_RATE_HZ;
@@ -558,16 +558,16 @@ static void test_cicada_calls(void) {
 
 static void test_cicada_space(void) {
   noise_config c = silent_config();
-  c.ambient_gain[NOISE_KIND_CICADAS] = 1.0f;
-  c.cicada_chorus = 0.0f;
-  c.cicada_stereo_width = 0.0f;
-  c.cicada_min_distance_m = 4.0f;
-  c.cicada_max_distance_m = 4.0f;
+  c.cicadas.gain = 1.0f;
+  c.cicadas.chorus = 0.0f;
+  c.cicadas.placement.stereo_width = 0.0f;
+  c.cicadas.placement.min_distance_m = 4.0f;
+  c.cicadas.placement.max_distance_m = 4.0f;
   double energy[3];
   for (unsigned run = 0; run < 3; ++run) {
     if (run == 1) {
-      c.cicada_min_distance_m = 32.0f;
-      c.cicada_max_distance_m = 32.0f;
+      c.cicadas.placement.min_distance_m = 32.0f;
+      c.cicadas.placement.max_distance_m = 32.0f;
     }
     if (run == 2) c.reverb_gain = 0.5f;
     solo_cicada(c, 5u * NOISE_SAMPLE_RATE_HZ);
@@ -598,18 +598,18 @@ static double band_share(double frequency) {
 
 static void test_cicada_songs(void) {
   noise_config c = silent_config();
-  c.ambient_gain[NOISE_KIND_CICADAS] = 1.0f;
-  c.cicada_chorus = 0.0f;
-  c.cicada_stereo_width = 0.0f;
-  c.cicada_min_distance_m = 5.0f;
-  c.cicada_max_distance_m = 5.0f;
+  c.cicadas.gain = 1.0f;
+  c.cicadas.chorus = 0.0f;
+  c.cicadas.placement.stereo_width = 0.0f;
+  c.cicadas.placement.min_distance_m = 5.0f;
+  c.cicadas.placement.max_distance_m = 5.0f;
   double share[NOISE_CICADA_SPECIES_COUNT];
   static double power[800]; /* 10 ms blocks. */
   for (unsigned species = 0; species < NOISE_CICADA_SPECIES_COUNT; ++species) {
-    c.cicada_species = (cicada_species)species;
+    c.cicadas.species = (cicada_species)species;
     solo_cicada(c, 0);
-    const noise_cicada_voice *v = &a.cicadas[0];
-    double pitch = c.cicada_pitch_hz * (1.0 + 0.05 * v->pitch_offset);
+    const noise_cicada_voice *v = &a.cicadas.voice[0];
+    double pitch = c.cicadas.pitch_hz * (1.0 + 0.05 * v->pitch_offset);
     unsigned syllables = v->syllables;
     unsigned blocks = 0;
     for (unsigned second = 0; second < 8; ++second) {
@@ -650,13 +650,13 @@ static void test_cicada_songs(void) {
     }
   }
   /* Syllables fade in rather than start at full level. */
-  c.cicada_species = CICADA_MINMINZEMI;
+  c.cicadas.species = CICADA_MINMINZEMI;
   solo_cicada(c, 0);
   double onset = 0.0, middle = 0.0;
   for (unsigned n = 0; n < 3u * NOISE_SAMPLE_RATE_HZ; ++n) {
     int16_t frame[2];
     noise_fill(&a, frame, 1);
-    const noise_cicada_voice *v = &a.cicadas[0];
+    const noise_cicada_voice *v = &a.cicadas.voice[0];
     if (v->holding || !v->note_length) continue;
     double x = (double)v->note_samples / v->sounding;
     if (x < 0.05) onset = fmax(onset, fabs((double)frame[0]));
@@ -676,8 +676,8 @@ static int compare_double(const void *left, const void *right) {
 /* The dry rumble fades out instead of stopping at full strength. */
 static void test_thunder_ending(void) {
   noise_config c = silent_config();
-  c.thunder_gain = 1.0f;
-  c.thunder_rate_per_min = 0.0f;
+  c.thunder.gain = 1.0f;
+  c.thunder.rate_per_min = 0.0f;
   double stop[12];
   unsigned loud = 0;
   for (unsigned s = 0; s < 12; ++s) {
@@ -732,8 +732,8 @@ static double brightness(const int16_t *x, unsigned frames) {
 /* Later arrivals travel farther, so the rumble 3 to 8 s in is darker than its onset. */
 static void test_thunder_tail(void) {
   noise_config c = silent_config();
-  c.thunder_gain = 1.0f;
-  c.thunder_rate_per_min = 0.0f;
+  c.thunder.gain = 1.0f;
+  c.thunder.rate_per_min = 0.0f;
   static int16_t strike_audio[2 * 9 * NOISE_SAMPLE_RATE_HZ];
   double ratio[8];
   for (unsigned s = 0; s < 8; ++s) {
@@ -756,14 +756,14 @@ static void test_thunder_tail(void) {
 /* After the last direct arrival the filters ring out within 250 ms; what follows is echo. */
 static void test_thunder_echoes(void) {
   noise_config c = silent_config();
-  c.thunder_gain = 1.0f;
-  c.thunder_rate_per_min = 0.0f;
+  c.thunder.gain = 1.0f;
+  c.thunder.rate_per_min = 0.0f;
   static int16_t strike_audio[2 * 40 * NOISE_SAMPLE_RATE_HZ];
   for (unsigned s = 0; s < 8; ++s) {
     assert(noise_init(&a, &c, 120 + s) == NOISE_OK);
     thunder_strike strike = {{700.0f * powf(8.0f, s / 7.0f), 0.8f * (float)s}};
     assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
-    const noise_thunder_voice *v = &a.thunder[0];
+    const noise_thunder_voice *v = &a.thunder.voice[0];
     float direct_end = 0.0f;
     for (unsigned i = 0; i < v->segments; ++i) {
       direct_end = fmaxf(direct_end, v->segment[i].start + v->segment[i].width);
@@ -783,27 +783,27 @@ static void test_thunder_echoes(void) {
 
 static void test_thunder(void) {
   noise_config c = silent_config();
-  c.thunder_gain = 1.01f;
+  c.thunder.gain = 1.01f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.thunder_rate_per_min = 21.0f;
+  c.thunder.rate_per_min = 21.0f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.thunder_min_distance_m = 199.0f;
+  c.thunder.min_distance_m = 199.0f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.thunder_max_distance_m = 900.0f;
+  c.thunder.max_distance_m = 900.0f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.thunder_reverb_decay_s = 0.4f;
+  c.thunder.reverb_decay_s = 0.4f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.thunder_reverb_gain = NAN;
+  c.thunder.reverb_gain = NAN;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
 
   c = silent_config();
-  c.thunder_gain = 1.0f;
-  c.thunder_rate_per_min = 0.0f;
+  c.thunder.gain = 1.0f;
+  c.thunder.rate_per_min = 0.0f;
   assert(noise_init(&a, &c, 61) == NOISE_OK);
   b = a;
   thunder_strike strike = {{100.0f, 0.0f}};
@@ -822,7 +822,7 @@ static void test_thunder(void) {
   double low = band_power(60), high = band_power(3200);
   assert(low > 100.0 * high);
   for (unsigned second = 1; second < 24; ++second) noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
-  assert(a.thunder[0].length == 0 && a.thunder[1].length == 0);
+  assert(a.thunder.voice[0].length == 0 && a.thunder.voice[1].length == 0);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   for (unsigned i = 0; i < 2 * NOISE_SAMPLE_RATE_HZ; ++i) assert(audio[i] == 0);
   assert(a.state.clipped_samples == 0);
@@ -858,7 +858,7 @@ static void test_thunder(void) {
     assert(noise_init(&a, &c, 66) == NOISE_OK);
     strike.position.distance_m = 200.0f;
     assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
-    noise_thunder_voice *v = &a.thunder[0];
+    noise_thunder_voice *v = &a.thunder.voice[0];
     v->segments = 1;
     v->segment[0].start = starts[w];
     v->segment[0].width = widths[w];
@@ -885,14 +885,14 @@ static void test_thunder(void) {
 
   /* With the voice stopped, the thunder reverb decays at its configured rate:
      60 dB per decay time, so about 17 dB per second at 3.5 s. */
-  c.thunder_reverb_gain = 1.0f;
-  c.thunder_reverb_decay_s = 3.5f;
+  c.thunder.reverb_gain = 1.0f;
+  c.thunder.reverb_decay_s = 3.5f;
   strike.position.distance_m = 1000.0f;
   strike.position.angle_rad = 0.0f;
   assert(noise_init(&a, &c, 67) == NOISE_OK);
   assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
   for (unsigned second = 0; second < 3; ++second) noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
-  a.thunder[0].length = 0;
+  a.thunder.voice[0].length = 0;
   double tail[2];
   for (unsigned second = 0; second < 2; ++second) {
     noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
@@ -904,10 +904,10 @@ static void test_thunder(void) {
   assert(tail[0] > 0.0);
   double decay_db = 10.0 * log10(tail[0] / tail[1]);
   assert(decay_db > 12.0 && decay_db < 22.0);
-  c.thunder_reverb_gain = 0.0f;
+  c.thunder.reverb_gain = 0.0f;
 
   /* Automatic strikes: one at start, then about rate/min, including capacity losses. */
-  c.thunder_rate_per_min = 20.0f;
+  c.thunder.rate_per_min = 20.0f;
   assert(noise_init(&a, &c, 64) == NOISE_OK);
   for (unsigned second = 0; second < 120; ++second) noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   uint64_t strikes = a.state.generated_thunder + a.state.dropped_thunder;
@@ -916,31 +916,31 @@ static void test_thunder(void) {
 
   /* Thunder draws from its own stream, so rain is unchanged by it. */
   c = silent_config();
-  c.rain_intensity = 0.8f;
+  c.weather.intensity = 0.8f;
   c.reverb_gain = 0.2f;
   assert(noise_init(&a, &c, 65) == NOISE_OK);
-  c.thunder_gain = 1.0f;
-  c.thunder_rate_per_min = 20.0f;
+  c.thunder.gain = 1.0f;
+  c.thunder.rate_per_min = 20.0f;
   assert(noise_init(&b, &c, 65) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   noise_fill(&b, audio, NOISE_SAMPLE_RATE_HZ);
   assert(b.state.generated_thunder >= 1);
   assert(a.state.generated_drops == b.state.generated_drops);
-  assert(a.drop_rng == b.drop_rng && a.arrival_rng == b.arrival_rng);
+  assert(a.rain.drop_rng == b.rain.drop_rng && a.rain.arrival_rng == b.rain.arrival_rng);
 }
 
 static void test_bubble_physics(void) {
   noise_config c = silent_config();
-  c.water_impact_gain_min = 1.0f;
-  c.water_impact_gain_max = 1.0f;
-  c.water_bubble_gain_min = 2.0f;
-  c.water_bubble_gain_max = 2.0f;
-  c.water_bubble_decay_min = 1.0f;
-  c.water_bubble_decay_max = 1.0f;
+  c.rain.water.impact_gain_min = 1.0f;
+  c.rain.water.impact_gain_max = 1.0f;
+  c.rain.water.bubble_gain_min = 2.0f;
+  c.rain.water.bubble_gain_max = 2.0f;
+  c.rain.water.bubble_decay_min = 1.0f;
+  c.rain.water.bubble_decay_max = 1.0f;
   droplet drop = water_drop();
   assert(noise_init(&a, &c, 1) == NOISE_OK);
   assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
-  noise_mode initial = a.voices[0].mode[1];
+  noise_mode initial = a.rain.voice[0].mode[1];
   double radius = drop.bubble_radius_m;
   double frequency = sqrt(3.0 * 1.4 * 101325.0 / 1000.0) / (2.0 * TEST_PI * radius);
   double damping = 0.13 / radius + 0.0072 / pow(radius, 1.5);
@@ -953,13 +953,13 @@ static void test_bubble_physics(void) {
   for (unsigned n = 0; n < delay + 120; ++n) {
     double t = n > delay ? (double)(n - delay) / NOISE_SAMPLE_RATE_HZ : 0.0;
     double expected = 0.07 * exp(-damping * t) * sin(2.0 * TEST_PI * frequency * t);
-    assert(fabs(a.voices[0].mode[1].current - expected) < 2e-6);
+    assert(fabs(a.rain.voice[0].mode[1].current - expected) < 2e-6);
     noise_fill(&a, frame, 1);
   }
   assert(noise_init(&b, &c, 1) == NOISE_OK);
   drop.bubble_radius_m *= 2.0f;
   assert(noise_trigger_drop(&b, &drop) == NOISE_OK);
-  noise_mode larger = b.voices[0].mode[1];
+  noise_mode larger = b.rain.voice[0].mode[1];
   double measured_frequency = acos(larger.coefficient / (2.0 * sqrt(larger.radius_squared))) *
                               NOISE_SAMPLE_RATE_HZ / (2.0 * TEST_PI);
   assert(fabs(measured_frequency - frequency / 2.0) < 0.01);
@@ -967,64 +967,64 @@ static void test_bubble_physics(void) {
 
 static void test_water_controls(void) {
   noise_config c = silent_config();
-  c.water_impact_gain_min = 0.25f;
-  c.water_impact_gain_max = 0.25f;
-  c.water_bubble_gain_min = 1.0f;
-  c.water_bubble_gain_max = 1.0f;
-  c.water_bubble_decay_min = 4.0f;
-  c.water_bubble_decay_max = 4.0f;
+  c.rain.water.impact_gain_min = 0.25f;
+  c.rain.water.impact_gain_max = 0.25f;
+  c.rain.water.bubble_gain_min = 1.0f;
+  c.rain.water.bubble_gain_max = 1.0f;
+  c.rain.water.bubble_decay_min = 4.0f;
+  c.rain.water.bubble_decay_max = 4.0f;
   droplet drop = water_drop();
   drop.bubble_radius_m = 0.0008f;
   assert(noise_init(&a, &c, 31) == NOISE_OK);
   assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
 
-  c.water_impact_gain_min = 0.5f;
-  c.water_impact_gain_max = 0.5f;
-  c.water_bubble_gain_min = 2.0f;
-  c.water_bubble_gain_max = 2.0f;
+  c.rain.water.impact_gain_min = 0.5f;
+  c.rain.water.impact_gain_max = 0.5f;
+  c.rain.water.bubble_gain_min = 2.0f;
+  c.rain.water.bubble_gain_max = 2.0f;
   assert(noise_init(&b, &c, 31) == NOISE_OK);
   assert(noise_trigger_drop(&b, &drop) == NOISE_OK);
-  assert(fabs(b.voices[0].mode[0].previous / a.voices[0].mode[0].previous - 2.0) < 1e-6);
-  assert(fabs(b.voices[0].mode[1].previous / a.voices[0].mode[1].previous - 4.0) < 1e-6);
+  assert(fabs(b.rain.voice[0].mode[0].previous / a.rain.voice[0].mode[0].previous - 2.0) < 1e-6);
+  assert(fabs(b.rain.voice[0].mode[1].previous / a.rain.voice[0].mode[1].previous - 4.0) < 1e-6);
 
   double r = drop.bubble_radius_m;
   double damping = (0.13 / r + 0.0072 / pow(r, 1.5)) / 4.0;
   double expected_radius = exp(-damping / NOISE_SAMPLE_RATE_HZ);
-  assert(fabs(sqrt(a.voices[0].mode[1].radius_squared) - expected_radius) < 1e-6);
+  assert(fabs(sqrt(a.rain.voice[0].mode[1].radius_squared) - expected_radius) < 1e-6);
 }
 
 static void test_automatic_water_bubbles(void) {
   noise_config c = silent_config();
-  c.rain_intensity = 1.0f;
-  c.max_drops_per_s = 2000.0f;
-  memset(c.surface_weight, 0, sizeof(c.surface_weight));
-  c.surface_weight[WATER] = 1.0f;
-  c.water_bubble_probability = 1.0f;
-  c.water_bubble_radius_min_m = 0.0006f;
-  c.water_bubble_radius_max_m = 0.0012f;
+  c.weather.intensity = 1.0f;
+  c.rain.max_drops_per_s = 2000.0f;
+  memset(c.rain.surface_weight, 0, sizeof(c.rain.surface_weight));
+  c.rain.surface_weight[WATER] = 1.0f;
+  c.rain.water.bubble_probability = 1.0f;
+  c.rain.water.bubble_radius_min_m = 0.0006f;
+  c.rain.water.bubble_radius_max_m = 0.0012f;
   assert(noise_init(&a, &c, 41) == NOISE_OK);
   int16_t frame[2];
   for (unsigned i = 0; i < 10000 && a.state.generated_drops == 0; ++i) {
     noise_fill(&a, frame, 1);
   }
   assert(a.state.generated_drops == 1);
-  noise_mode bubble = a.voices[0].mode[1];
+  noise_mode bubble = a.rain.voice[0].mode[1];
   assert(bubble.remaining > 0);
   double q = sqrt(bubble.radius_squared);
   double frequency = acos(bubble.coefficient / (2.0 * q)) *
                      NOISE_SAMPLE_RATE_HZ / (2.0 * TEST_PI);
   double radius = sqrt(3.0 * 1.4 * 101325.0 / 1000.0) /
                   (2.0 * TEST_PI * frequency);
-  assert(radius >= c.water_bubble_radius_min_m);
-  assert(radius <= c.water_bubble_radius_max_m);
+  assert(radius >= c.rain.water.bubble_radius_min_m);
+  assert(radius <= c.rain.water.bubble_radius_max_m);
 
-  c.water_bubble_probability = 0.0f;
+  c.rain.water.bubble_probability = 0.0f;
   assert(noise_init(&a, &c, 41) == NOISE_OK);
   for (unsigned i = 0; i < 10000 && a.state.generated_drops == 0; ++i) {
     noise_fill(&a, frame, 1);
   }
   assert(a.state.generated_drops == 1);
-  assert(a.voices[0].mode[1].remaining == 0);
+  assert(a.rain.voice[0].mode[1].remaining == 0);
 }
 
 static void test_roof_surfaces(void) {
@@ -1034,9 +1034,9 @@ static void test_roof_surfaces(void) {
   drop.surface = PLASTIC;
   assert(noise_init(&a, &c, 51) == NOISE_OK);
   assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
-  double plastic_damping = -log(sqrt(a.voices[0].mode[1].radius_squared)) *
+  double plastic_damping = -log(sqrt(a.rain.voice[0].mode[1].radius_squared)) *
                            NOISE_SAMPLE_RATE_HZ;
-  float plastic_lowpass = a.voices[0].material_lowpass_alpha;
+  float plastic_lowpass = a.rain.voice[0].material_lowpass_alpha;
   assert(fabs(plastic_damping - 110.0) < 0.01);
   assert(fabs(plastic_lowpass - (-expm1(-2.0 * TEST_PI * 1600.0 /
                                         NOISE_SAMPLE_RATE_HZ))) < 1e-6);
@@ -1044,19 +1044,19 @@ static void test_roof_surfaces(void) {
   drop.surface = ASPHALT;
   assert(noise_init(&b, &c, 51) == NOISE_OK);
   assert(noise_trigger_drop(&b, &drop) == NOISE_OK);
-  double asphalt_damping = -log(sqrt(b.voices[0].mode[1].radius_squared)) *
+  double asphalt_damping = -log(sqrt(b.rain.voice[0].mode[1].radius_squared)) *
                            NOISE_SAMPLE_RATE_HZ;
   assert(fabs(asphalt_damping - 1600.0) < 0.1);
-  assert(b.voices[0].material_lowpass_alpha == 1.0f);
+  assert(b.rain.voice[0].material_lowpass_alpha == 1.0f);
 
   drop.surface = ASPHALT_ROOF;
   assert(noise_init(&b, &c, 51) == NOISE_OK);
   assert(noise_trigger_drop(&b, &drop) == NOISE_OK);
-  double roof_damping = -log(sqrt(b.voices[0].mode[1].radius_squared)) *
+  double roof_damping = -log(sqrt(b.rain.voice[0].mode[1].radius_squared)) *
                         NOISE_SAMPLE_RATE_HZ;
   assert(fabs(roof_damping - 300.0) < 0.1);
-  assert(b.voices[0].material_lowpass_alpha < plastic_lowpass);
-  assert(b.voices[0].material_lowpass_alpha > 0.0f);
+  assert(b.rain.voice[0].material_lowpass_alpha < plastic_lowpass);
+  assert(b.rain.voice[0].material_lowpass_alpha > 0.0f);
 
 }
 
@@ -1091,17 +1091,17 @@ static double delay_center(const noise_drop_voice *voice, unsigned ear) {
 
 static void test_spatial_geometry(void) {
   noise_config c = silent_config();
-  c.head_amount = 0.0f;
-  c.rear_amount = 0.0f;
+  c.listener.head_amount = 0.0f;
+  c.listener.rear_amount = 0.0f;
   droplet drop = water_drop();
   drop.position.distance_m = 2.0f;
   drop.position.angle_rad = (float)(TEST_PI / 2.0);
   assert(noise_init(&a, &c, 9) == NOISE_OK);
   assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
-  double expected_delay = c.stereo_width_m * NOISE_SAMPLE_RATE_HZ / 343.0;
-  assert(fabs(delay_center(&a.voices[0], 0) - delay_center(&a.voices[0], 1) - expected_delay) < 0.0001);
-  double expected_ratio = (2.0 - c.stereo_width_m / 2.0) / (2.0 + c.stereo_width_m / 2.0);
-  const noise_spatial *s = &a.voices[0].spatial;
+  double expected_delay = c.listener.stereo_width_m * NOISE_SAMPLE_RATE_HZ / 343.0;
+  assert(fabs(delay_center(&a.rain.voice[0], 0) - delay_center(&a.rain.voice[0], 1) - expected_delay) < 0.0001);
+  double expected_ratio = (2.0 - c.listener.stereo_width_m / 2.0) / (2.0 + c.listener.stereo_width_m / 2.0);
+  const noise_spatial *s = &a.rain.voice[0].spatial;
   assert(fabs(s->ear_gain[0] / s->ear_gain[1] - expected_ratio) < 1e-6);
 
   /* Check the rendered phase at 1 kHz against path length, including fractional delay. */
@@ -1117,19 +1117,19 @@ static void test_spatial_geometry(void) {
     }
   }
   double phase_difference = atan2(imaginary[0], real[0]) - atan2(imaginary[1], real[1]);
-  double phase_error = phase_difference + 2.0 * TEST_PI * 1000.0 * c.stereo_width_m / 343.0;
+  double phase_error = phase_difference + 2.0 * TEST_PI * 1000.0 * c.listener.stereo_width_m / 343.0;
   assert(fabs(remainder(phase_error, 2.0 * TEST_PI)) < 0.03);
 
-  c.head_amount = 1.0f;
+  c.listener.head_amount = 1.0f;
   assert(noise_init(&a, &c, 9) == NOISE_OK);
   assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
-  double radius = c.stereo_width_m / 2.0;
+  double radius = c.listener.stereo_width_m / 2.0;
   double far_path = sqrt(4.0 - radius * radius) + radius * (TEST_PI - acos(radius / 2.0));
   double around_delay = (far_path - (2.0 - radius)) * NOISE_SAMPLE_RATE_HZ / 343.0;
-  assert(fabs(delay_center(&a.voices[0], 0) - delay_center(&a.voices[0], 1) - around_delay) < 0.001);
+  assert(fabs(delay_center(&a.rain.voice[0], 0) - delay_center(&a.rain.voice[0], 1) - around_delay) < 0.001);
   assert(around_delay > expected_delay);
   for (unsigned ear = 0; ear < 2; ++ear) {
-    const noise_spatial *v = &a.voices[0].spatial;
+    const noise_spatial *v = &a.rain.voice[0].spatial;
     double dc = (v->head_b0[ear] + v->head_b1[ear]) / (1.0 - v->head_feedback);
     double high = (v->head_b0[ear] - v->head_b1[ear]) / (1.0 + v->head_feedback);
     assert(fabs(dc - 1.0) < 1e-6);
@@ -1154,17 +1154,17 @@ static void test_spatial_geometry(void) {
 
 static void test_spatial_bypass_and_distance(void) {
   noise_config c = silent_config();
-  c.water_impact_gain_min = 1.0f;
-  c.water_impact_gain_max = 1.0f;
-  c.water_bubble_decay_min = 1.0f;
-  c.water_bubble_decay_max = 1.0f;
-  c.stereo_width_m = 0.0f;
+  c.rain.water.impact_gain_min = 1.0f;
+  c.rain.water.impact_gain_max = 1.0f;
+  c.rain.water.bubble_decay_min = 1.0f;
+  c.rain.water.bubble_decay_max = 1.0f;
+  c.listener.stereo_width_m = 0.0f;
   droplet drop = water_drop();
   drop.position.angle_rad = 0.7f;
   drop.position.distance_m = 2.0f;
   assert(noise_init(&a, &c, 3) == NOISE_OK);
   assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
-  c.head_amount = 0.0f;
+  c.listener.head_amount = 0.0f;
   assert(noise_init(&b, &c, 3) == NOISE_OK);
   assert(noise_trigger_drop(&b, &drop) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
@@ -1215,7 +1215,7 @@ static void test_spatial_bypass_and_distance(void) {
   double rear_high = 2.0 * hypot(rear_real, rear_imaginary) / NOISE_SAMPLE_RATE_HZ;
   assert(rear_high < 0.45 * front_high);
 
-  c.rear_amount = 0.0f;
+  c.listener.rear_amount = 0.0f;
   assert(noise_init(&a, &c, 3) == NOISE_OK);
   assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
   drop.position.angle_rad = 0.0f;
@@ -1233,14 +1233,14 @@ static void test_spatial_extremes(void) {
   const float widths[] = {0.0f, 1e-20f, 0.001f, 0.18f, 0.49999997f, 0.5f};
   for (unsigned w = 0; w < sizeof(widths) / sizeof(widths[0]); ++w) {
     noise_config c = silent_config();
-    c.stereo_width_m = widths[w];
+    c.listener.stereo_width_m = widths[w];
     assert(noise_init(&a, &c, 9) == NOISE_OK);
     droplet drop = water_drop();
     drop.position.distance_m = 0.25f;
     for (unsigned angle = 0; angle < 36; ++angle) {
       drop.position.angle_rad = (float)(angle * TEST_PI / 18.0);
       assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
-      noise_drop_voice *v = &a.voices[a.state.active_drops - 1];
+      noise_drop_voice *v = &a.rain.voice[a.state.active_drops - 1];
       for (unsigned ear = 0; ear < 2; ++ear) {
         assert(isfinite(v->spatial.ear_gain[ear]));
         assert(v->spatial.ear_delay[ear] + 3 < NOISE_DIRECT_SAMPLES);
@@ -1249,15 +1249,15 @@ static void test_spatial_extremes(void) {
     noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
     assert(a.state.active_drops == 0);
     for (unsigned i = 0; i < NOISE_DIRECT_SAMPLES; ++i) {
-      assert(a.direct[0][i] == 0.0f && a.direct[1][i] == 0.0f);
+      assert(a.bus.direct[0][i] == 0.0f && a.bus.direct[1][i] == 0.0f);
     }
   }
 }
 
 static void test_weather_and_arrivals(void) {
   noise_config c = silent_config();
-  c.rain_intensity = 0.5f;
-  c.max_drops_per_s = 800.0f;
+  c.weather.intensity = 0.5f;
+  c.rain.max_drops_per_s = 800.0f;
   assert(noise_init(&a, &c, 47) == NOISE_OK);
   double sum = 0, sum_squared = 0;
   for (unsigned second = 0; second < 60; ++second) {
@@ -1272,9 +1272,9 @@ static void test_weather_and_arrivals(void) {
   assert(fabs(mean - 400.0) < 12.0);
   assert(variance > 150.0 && variance < 700.0);
   assert(a.state.dropped_drops == 0);
-  c.vary_rain = 1;
-  c.weather_step_s = 0.1f;
-  c.rain_slew_s = 0.01f;
+  c.weather.vary = 1;
+  c.weather.step_s = 0.1f;
+  c.weather.slew_s = 0.01f;
   assert(noise_init(&a, &c, 5) == NOISE_OK);
   c.ambient_gain[NOISE_KIND_WHITE] = 0.2f;
   assert(noise_init(&b, &c, 5) == NOISE_OK);
@@ -1284,8 +1284,8 @@ static void test_weather_and_arrivals(void) {
   for (unsigned n = 0; n < 20 * NOISE_SAMPLE_RATE_HZ; ++n) {
     noise_fill(&a, audio, 1);
     noise_fill(&b, other, 1);
-    assert(a.state.rain_intensity >= c.min_rain_intensity);
-    assert(a.state.rain_intensity <= c.max_rain_intensity);
+    assert(a.state.rain_intensity >= c.weather.min_intensity);
+    assert(a.state.rain_intensity <= c.weather.max_intensity);
     assert(a.state.rain_intensity == b.state.rain_intensity);
     assert(a.state.generated_drops == b.state.generated_drops);
     assert(abs((int)a.state.weather_state - (int)previous_state) <= 1);
@@ -1297,26 +1297,26 @@ static void test_weather_and_arrivals(void) {
 
 static void test_random_stream_separation(void) {
   noise_config c = silent_config();
-  c.rain_intensity = 1.0f;
+  c.weather.intensity = 1.0f;
   c.ambient_gain[NOISE_KIND_WHITE] = 0.1f;
   assert(noise_init(&a, &c, 1) == NOISE_OK);
   unsigned adjacent_matches = 0;
   for (unsigned i = 0; i < 16; ++i) {
-    uint32_t arrival = a.arrival_rng;
+    uint32_t arrival = a.rain.arrival_rng;
     noise_fill(&a, audio, 1);
-    adjacent_matches += a.ambient_rng == arrival;
+    adjacent_matches += a.ambient.rng == arrival;
   }
   assert(adjacent_matches < 2);
 }
 
 static void test_slow_weather_slew(void) {
   noise_config c = silent_config();
-  c.vary_rain = 1;
-  c.min_rain_intensity = 0.0f;
-  c.max_rain_intensity = 1.0f;
-  c.rain_slew_s = 60.0f;
-  c.weather_step_s = 3600.0f;
-  c.max_drops_per_s = 0.0f;
+  c.weather.vary = 1;
+  c.weather.min_intensity = 0.0f;
+  c.weather.max_intensity = 1.0f;
+  c.weather.slew_s = 60.0f;
+  c.weather.step_s = 3600.0f;
+  c.rain.max_drops_per_s = 0.0f;
   assert(noise_init(&a, &c, 1) == NOISE_OK);
   /* Hold the internal control target fixed for an analytic step-response check. */
   a.state.rain_target = 1.0f;
@@ -1326,27 +1326,27 @@ static void test_slow_weather_slew(void) {
 
 static void test_weather_modulation(void) {
   noise_config c = silent_config();
-  c.rain_intensity = 0.0f;
-  c.max_drops_per_s = 100.0f;
+  c.weather.intensity = 0.0f;
+  c.rain.max_drops_per_s = 100.0f;
   assert(noise_init(&a, &c, 21) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   assert(a.state.generated_drops == 0);
 
-  c.weather_mod_amount[WEATHER_MOD_ARRIVAL_RATE] = 0.0f;
+  c.weather.mod_amount[WEATHER_MOD_ARRIVAL_RATE] = 0.0f;
   assert(noise_init(&a, &c, 21) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   assert(a.state.generated_drops > 50);
 
-  c.rain_intensity = 1.0f;
-  c.weather_mod_amount[WEATHER_MOD_ARRIVAL_RATE] = -1.0f;
+  c.weather.intensity = 1.0f;
+  c.weather.mod_amount[WEATHER_MOD_ARRIVAL_RATE] = -1.0f;
   assert(noise_init(&a, &c, 21) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   assert(a.state.generated_drops == 0);
 
-  c.max_drops_per_s = 0.0f;
-  c.rain_intensity = 0.0f;
-  c.rain_gain = 0.5f;
-  c.weather_mod_amount[WEATHER_MOD_RAIN_GAIN] = 1.0f;
+  c.rain.max_drops_per_s = 0.0f;
+  c.weather.intensity = 0.0f;
+  c.rain.gain = 0.5f;
+  c.weather.mod_amount[WEATHER_MOD_RAIN_GAIN] = 1.0f;
   droplet drop = water_drop();
   drop.bubble_radius_m = 0.0f;
   assert(noise_init(&a, &c, 21) == NOISE_OK);
@@ -1354,7 +1354,7 @@ static void test_weather_modulation(void) {
   noise_fill(&a, audio, 1024);
   for (unsigned i = 0; i < 2048; ++i) assert(audio[i] == 0);
 
-  c.rain_intensity = 1.0f;
+  c.weather.intensity = 1.0f;
   assert(noise_init(&a, &c, 21) == NOISE_OK);
   assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
   noise_fill(&a, audio, 1024);
@@ -1365,7 +1365,7 @@ static void test_weather_modulation(void) {
 
 static void test_output_saturation(void) {
   noise_config c = silent_config();
-  c.rain_gain = 1.0f;
+  c.rain.gain = 1.0f;
   assert(noise_init(&a, &c, 13) == NOISE_OK);
   droplet drop = water_drop();
   drop.surface = METAL;
@@ -1385,16 +1385,16 @@ static void test_output_saturation(void) {
 static double reverb_energy(const noise_gen *gen) {
   double energy = 0.0;
   for (unsigned i = 0; i < NOISE_REVERB_SAMPLES; ++i) {
-    energy += (double)gen->reverb[i] * gen->reverb[i];
+    energy += (double)gen->reverb.buffer[i] * gen->reverb.buffer[i];
   }
   return energy;
 }
 
 static void test_reverb_decay(void) {
   noise_config c = silent_config();
-  c.rain_gain = 1.0f;
+  c.rain.gain = 1.0f;
   c.reverb_gain = 1.0f;
-  c.stereo_width_m = 0.0f;
+  c.listener.stereo_width_m = 0.0f;
   droplet drop = water_drop();
   drop.bubble_radius_m = 0.0f;
   assert(noise_init(&a, &c, 17) == NOISE_OK);

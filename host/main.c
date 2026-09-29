@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
       return 0;
     }
     if (strcmp(arg, "-v") == 0) {
-      config.vary_rain = 1;
+      config.weather.vary = 1;
       rain = 1;
       continue;
     }
@@ -106,11 +106,15 @@ int main(int argc, char **argv) {
       if (strcmp(value, "rain") == 0) {
         rain = 1;
       } else if (strcmp(value, "thunder") == 0) {
-        config.thunder_gain = 0.5f;
+        config.thunder.gain = 0.5f;
+      } else if (strcmp(value, "wind") == 0) {
+        config.wind.gain = 0.3f;
+      } else if (strcmp(value, "crickets") == 0) {
+        config.crickets.gain = 0.3f;
+      } else if (strcmp(value, "cicadas") == 0) {
+        config.cicadas.gain = 0.3f;
       } else {
-        static const char *names[] = {
-          "white", "pink", "hum50", "hum60", "wind", "crickets", "cicadas"
-        };
+        static const char *names[NOISE_KIND_COUNT] = {"white", "pink", "hum50", "hum60"};
         unsigned kind = 0;
         while (kind < NOISE_KIND_COUNT && strcmp(value, names[kind])) ++kind;
         if (kind == NOISE_KIND_COUNT) {
@@ -127,7 +131,7 @@ int main(int argc, char **argv) {
       if (strcmp(value, "mixed") == 0) {
         noise_config defaults;
         noise_config_default(&defaults);
-        memcpy(config.surface_weight, defaults.surface_weight, sizeof(config.surface_weight));
+        memcpy(config.rain.surface_weight, defaults.rain.surface_weight, sizeof(config.rain.surface_weight));
       } else {
         unsigned surface = 0;
         while (surface < NOISE_SURFACE_COUNT && strcmp(value, names[surface])) ++surface;
@@ -135,8 +139,8 @@ int main(int argc, char **argv) {
           fprintf(stderr, "unknown surface: %s\n", value);
           return 1;
         }
-        memset(config.surface_weight, 0, sizeof(config.surface_weight));
-        config.surface_weight[surface] = 1.0f;
+        memset(config.rain.surface_weight, 0, sizeof(config.rain.surface_weight));
+        config.rain.surface_weight[surface] = 1.0f;
       }
     } else if (strcmp(arg, "-c") == 0) {
       static const char *names[] = {"dog-day", "minminzemi", "higurashi"};
@@ -146,7 +150,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "unknown cicada species: %s\n", value);
         return 1;
       }
-      config.cicada_species = (cicada_species)species;
+      config.cicadas.species = (cicada_species)species;
     } else if (strcmp(arg, "-s") == 0) {
       char *end;
       errno = 0;
@@ -173,25 +177,25 @@ int main(int argc, char **argv) {
         return 1;
       }
       if (strcmp(arg, "-r") == 0) {
-        config.rain_intensity = (float)number;
+        config.weather.intensity = (float)number;
         explicit_intensity = 1;
         rain = 1;
       } else if (strcmp(arg, "-l") == 0) {
-        config.min_rain_intensity = (float)number;
+        config.weather.min_intensity = (float)number;
       } else if (strcmp(arg, "-u") == 0) {
-        config.max_rain_intensity = (float)number;
+        config.weather.max_intensity = (float)number;
       } else if (strcmp(arg, "-n") == 0) {
-        config.max_drops_per_s = (float)number;
+        config.rain.max_drops_per_s = (float)number;
       } else if (strcmp(arg, "-t") == 0) {
-        config.thunder_rate_per_min = (float)number;
+        config.thunder.rate_per_min = (float)number;
       } else if (strcmp(arg, "-e") == 0) {
         config.reverb_gain = (float)number;
       } else if (strcmp(arg, "-b") == 0) {
-        config.stereo_width_m = (float)number;
+        config.listener.stereo_width_m = (float)number;
       } else if (strcmp(arg, "-a") == 0) {
-        config.head_amount = (float)number;
+        config.listener.head_amount = (float)number;
       } else if (strcmp(arg, "-f") == 0) {
-        config.rear_amount = (float)number;
+        config.listener.rear_amount = (float)number;
       } else if (strcmp(arg, "-g") == 0) {
         config.master_gain = (float)number;
       } else {
@@ -206,8 +210,8 @@ int main(int argc, char **argv) {
   }
   if (!explicit_layer && !rain) config.ambient_gain[NOISE_KIND_PINK] = 0.3f;
   if (rain && !explicit_intensity) {
-    config.rain_intensity = config.vary_rain ?
-        0.5f * (config.min_rain_intensity + config.max_rain_intensity) : 0.5f;
+    config.weather.intensity = config.weather.vary ?
+        0.5f * (config.weather.min_intensity + config.weather.max_intensity) : 0.5f;
   }
   double max_frames = (UINT32_MAX - 36u) / WAV_FRAME_BYTES;
   double requested_frames = seconds * NOISE_SAMPLE_RATE_HZ;

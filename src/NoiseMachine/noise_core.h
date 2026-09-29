@@ -21,15 +21,13 @@ extern "C" {
 #define NOISE_THUNDER_BANDS 4u /* Three span the channel's range; one holds echoes. */
 #define NOISE_THUNDER_ECHOES 6u
 #define NOISE_THUNDER_REVERB_SAMPLES 6132u
+#define NOISE_HUM_TABLE_SAMPLES 882u /* One 50 Hz period. */
 
 typedef enum noise_kind {
   NOISE_KIND_WHITE = 0,
   NOISE_KIND_PINK,
-  HUM_50HZ,
-  HUM_60HZ,
-  NOISE_KIND_WIND,
-  NOISE_KIND_CRICKETS,
-  NOISE_KIND_CICADAS,
+  NOISE_KIND_HUM_50HZ,
+  NOISE_KIND_HUM_60HZ,
   NOISE_KIND_COUNT
 } noise_kind;
 
@@ -98,58 +96,96 @@ typedef struct thunder_strike {
   position_polar position; /* Distance 200..15000 m. */
 } thunder_strike;
 
-typedef struct noise_config {
-  float ambient_gain[NOISE_KIND_COUNT]; /* Independent linear gains, each 0..1. */
-  float wind_brightness;
-  float wind_gust_depth;
-  float wind_gust_rate_hz;
-  float wind_stereo_width;
-  float cricket_call_rate_hz;
-  float cricket_pitch_hz;
-  float cricket_pitch_variation;
-  float cricket_stereo_width; /* Angular spread: 0 all in front, 1 all around. */
-  float cricket_min_distance_m;
-  float cricket_max_distance_m;
-  cicada_species cicada_species;
-  float cicada_pitch_hz;
-  float cicada_click_rate_scale; /* 0.5..1.5 times the species' tymbal click rate. */
-  float cicada_chorus; /* Level of the distant chorus under the individuals. */
-  float cicada_stereo_width; /* Angular spread: 0 all in front, 1 all around. */
-  float cicada_min_distance_m;
-  float cicada_max_distance_m;
-  float thunder_gain;
-  float thunder_rate_per_min; /* Automatic strikes; zero allows only manual strikes. */
-  float thunder_min_distance_m;
-  float thunder_max_distance_m;
-  float thunder_reverb_gain;
-  float thunder_reverb_decay_s; /* Time to fall 60 dB. */
-  float master_gain;
-  float rain_gain;
-  float rain_intensity; /* Initial intensity, 0..1; zero means no arrivals. */
-  float min_rain_intensity;
-  float max_rain_intensity;
-  int vary_rain;
-  float weather_step_s;
-  float rain_slew_s;
+/* Crickets and cicadas share this placement; each voice keeps fixed offsets within it. */
+typedef struct noise_placement {
+  float stereo_width; /* Angular spread: 0 all in front, 1 all around. */
+  float min_distance_m;
+  float max_distance_m;
+} noise_placement;
+
+typedef struct noise_listener_config {
+  float stereo_width_m; /* Ear spacing; sphere radius is half this width. */
+  float head_amount; /* 0: spaced microphones, 1: spherical head. */
+  float rear_amount; /* 0: bypass rear filter, 1: full rear filter. */
+} noise_listener_config;
+
+typedef struct noise_weather_config {
+  int vary;
+  float intensity; /* Initial intensity, 0..1; zero means no arrivals. */
+  float min_intensity;
+  float max_intensity;
+  float step_s;
+  float slew_s;
+  float mod_amount[NOISE_WEATHER_MOD_COUNT]; /* Bipolar depths, -1..1. */
+} noise_weather_config;
+
+typedef struct noise_water_config {
+  float impact_gain_min;
+  float impact_gain_max;
+  float bubble_probability;
+  float bubble_radius_min_m;
+  float bubble_radius_max_m;
+  float bubble_gain_min;
+  float bubble_gain_max;
+  float bubble_decay_min;
+  float bubble_decay_max;
+} noise_water_config;
+
+typedef struct noise_rain_config {
+  float gain;
   float max_drops_per_s;
   float surface_weight[NOISE_SURFACE_COUNT]; /* Nonnegative relative weights. */
   float min_distance_m;
   float max_distance_m;
   float fall_height_m;
-  float stereo_width_m; /* Ear spacing; sphere radius is half this width. */
-  float head_amount; /* 0: spaced microphones, 1: spherical head. */
-  float rear_amount; /* 0: bypass rear filter, 1: full rear filter. */
+  noise_water_config water;
+} noise_rain_config;
+
+typedef struct noise_wind_config {
+  float gain;
+  float brightness;
+  float gust_depth;
+  float gust_rate_hz;
+  float stereo_width;
+} noise_wind_config;
+
+typedef struct noise_cricket_config {
+  float gain;
+  float call_rate_hz;
+  float pitch_hz;
+  float pitch_variation;
+  noise_placement placement;
+} noise_cricket_config;
+
+typedef struct noise_cicada_config {
+  float gain;
+  cicada_species species;
+  float pitch_hz;
+  float click_rate_scale; /* 0.5..1.5 times the species' tymbal click rate. */
+  float chorus; /* Level of the distant chorus under the individuals. */
+  noise_placement placement;
+} noise_cicada_config;
+
+typedef struct noise_thunder_config {
+  float gain;
+  float rate_per_min; /* Automatic strikes; zero allows only manual strikes. */
+  float min_distance_m;
+  float max_distance_m;
+  float reverb_gain;
+  float reverb_decay_s; /* Time to fall 60 dB. */
+} noise_thunder_config;
+
+typedef struct noise_config {
+  float master_gain;
+  float ambient_gain[NOISE_KIND_COUNT]; /* Independent linear gains, each 0..1. */
   float reverb_gain; /* Rain and insect sends are before distance attenuation. */
-  float water_impact_gain_min;
-  float water_impact_gain_max;
-  float water_bubble_probability;
-  float water_bubble_radius_min_m;
-  float water_bubble_radius_max_m;
-  float water_bubble_gain_min;
-  float water_bubble_gain_max;
-  float water_bubble_decay_min;
-  float water_bubble_decay_max;
-  float weather_mod_amount[NOISE_WEATHER_MOD_COUNT]; /* Bipolar depths, -1..1. */
+  noise_listener_config listener;
+  noise_weather_config weather;
+  noise_rain_config rain;
+  noise_wind_config wind;
+  noise_cricket_config crickets;
+  noise_cicada_config cicadas;
+  noise_thunder_config thunder;
 } noise_config;
 
 typedef struct noise_mode {
@@ -291,64 +327,109 @@ typedef struct noise_state {
   uint64_t dropped_thunder;
 } noise_state;
 
+/* Direct-path mix that point sources write ahead into at their ear delays. */
+typedef struct noise_bus {
+  float direct[2][NOISE_DIRECT_SAMPLES];
+  unsigned position;
+} noise_bus;
+
+/* Six-line feedback delay network; the caller owns the delay-line buffer. */
+typedef struct noise_fdn {
+  unsigned position[NOISE_REVERB_LINES];
+  float damping[NOISE_REVERB_LINES];
+  float feedback[NOISE_REVERB_LINES];
+} noise_fdn;
+
+typedef struct noise_reverb {
+  float buffer[NOISE_REVERB_SAMPLES];
+  noise_fdn fdn;
+} noise_reverb;
+
+typedef struct noise_ambient {
+  uint32_t rng;
+  float pink[7];
+  uint32_t hum_sample;
+  float hum_table[NOISE_HUM_TABLE_SAMPLES];
+} noise_ambient;
+
+typedef struct noise_wind {
+  uint32_t rng;
+  float air[2];
+  float rumble[2];
+  float gust;
+  float gust_target;
+  float air_alpha;
+  float gust_alpha;
+  float brightness_cache;
+  float gust_rate_cache;
+  uint32_t gust_samples;
+} noise_wind;
+
+typedef struct noise_crickets {
+  uint32_t rng;
+  unsigned started;
+  noise_cricket_voice voice[NOISE_CRICKET_VOICES];
+} noise_crickets;
+
+typedef struct noise_cicadas {
+  uint32_t rng;
+  unsigned started;
+  noise_cicada_voice voice[NOISE_CICADA_VOICES];
+  noise_resonator chorus[2]; /* Independent per ear. */
+  int species_cache;
+  float pitch_cache;
+  float swell;
+  float swell_target;
+  uint32_t swell_samples;
+} noise_cicadas;
+
+/* Runs at a quarter of the sample rate and interpolates its output. */
+typedef struct noise_thunder_reverb {
+  float buffer[NOISE_THUNDER_REVERB_SAMPLES];
+  noise_fdn fdn;
+  float decay_cache;
+  float input;
+  unsigned phase;
+  float output[2][2]; /* Previous and current quarter-rate outputs. */
+} noise_thunder_reverb;
+
+typedef struct noise_thunder {
+  uint32_t rng;
+  uint32_t echo_rng;
+  unsigned started;
+  noise_thunder_voice voice[NOISE_THUNDER_VOICES];
+  noise_reflector reflector[NOISE_THUNDER_ECHOES]; /* Fixed per seed: every strike echoes off the same terrain. */
+  noise_thunder_reverb reverb;
+} noise_thunder;
+
+typedef struct noise_weather {
+  uint32_t rng;
+  uint32_t samples;
+  uint32_t period;
+  float slew;
+  float slew_error;
+} noise_weather;
+
+typedef struct noise_rain {
+  uint32_t arrival_rng;
+  uint32_t drop_rng;
+  float surface_cdf[NOISE_SURFACE_COUNT];
+  noise_drop_voice voice[NOISE_MAX_DROPLETS];
+} noise_rain;
+
 /* Caller-owned storage. Treat all fields except the read-only state as private. */
 typedef struct noise_gen {
   noise_config config;
   noise_state state;
-  uint32_t ambient_rng;
-  uint32_t wind_rng;
-  uint32_t cricket_rng;
-  uint32_t cicada_rng;
-  uint32_t thunder_rng;
-  uint32_t thunder_echo_rng;
-  uint32_t arrival_rng;
-  uint32_t drop_rng;
-  uint32_t weather_rng;
-  float pink_b[7];
-  float wind_filter[2];
-  float wind_rumble[2];
-  float wind_gust;
-  float wind_gust_target;
-  float wind_air_alpha;
-  float wind_gust_alpha;
-  float wind_brightness_cache;
-  float wind_gust_rate_cache;
-  uint32_t wind_gust_samples;
-  noise_cricket_voice crickets[NOISE_CRICKET_VOICES];
-  unsigned cricket_started;
-  noise_cicada_voice cicadas[NOISE_CICADA_VOICES];
-  unsigned cicada_started;
-  noise_resonator cicada_chorus[2]; /* Independent per ear. */
-  int cicada_species_cache;
-  float cicada_pitch_cache;
-  float cicada_swell;
-  float cicada_swell_target;
-  uint32_t cicada_swell_samples;
-  noise_thunder_voice thunder[NOISE_THUNDER_VOICES];
-  noise_reflector reflector[NOISE_THUNDER_ECHOES]; /* Fixed per seed: every strike echoes off the same terrain. */
-  unsigned thunder_started;
-  float thunder_reverb[NOISE_THUNDER_REVERB_SAMPLES];
-  unsigned thunder_reverb_position[NOISE_REVERB_LINES];
-  float thunder_reverb_damping[NOISE_REVERB_LINES];
-  float thunder_reverb_feedback[NOISE_REVERB_LINES];
-  float thunder_reverb_decay_cache;
-  float thunder_reverb_input;
-  unsigned thunder_reverb_phase;
-  float thunder_reverb_output[2][2]; /* Previous and current quarter-rate outputs. */
-  uint32_t hum_sample;
-  float hum_table[882];
-  noise_drop_voice voices[NOISE_MAX_DROPLETS];
-  float surface_cdf[NOISE_SURFACE_COUNT];
-  uint32_t weather_samples;
-  uint32_t weather_period;
-  float rain_slew;
-  float rain_slew_error;
-  float reverb[NOISE_REVERB_SAMPLES];
-  unsigned reverb_position[NOISE_REVERB_LINES];
-  float reverb_damping[NOISE_REVERB_LINES];
-  float reverb_feedback[NOISE_REVERB_LINES];
-  float direct[2][NOISE_DIRECT_SAMPLES];
-  unsigned direct_position;
+  noise_bus bus;
+  noise_ambient ambient;
+  noise_wind wind;
+  noise_crickets crickets;
+  noise_cicadas cicadas;
+  noise_thunder thunder;
+  noise_weather weather;
+  noise_rain rain;
+  noise_reverb reverb;
 } noise_gen;
 
 void noise_config_default(noise_config *config);
