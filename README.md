@@ -47,6 +47,21 @@ signed 16-bit PCM.
 `make -C host run` builds, renders pink noise, and plays it using macOS
 `afplay`. Other platforms can play the WAV in any audio player.
 
+## Live macOS GUI
+
+Build and open the basic native GUI:
+
+```sh
+make -C host gui
+./host/noise_gui
+```
+
+Press **Start** for continuous playback. The sliders control each ambient
+layer, rain intensity and gain, drop rate, reverb, spatial effects, stereo
+width, and master gain. Changes apply while audio plays. Head, width, and
+surface changes affect new rain drops; existing drop tails finish with their
+original spatial settings.
+
 ## Host controls
 
 Run `./host/noise_host -h` for usage.

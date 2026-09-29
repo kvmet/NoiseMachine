@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import struct
 import subprocess
+import sys
 import tempfile
 import wave
 
@@ -70,6 +71,10 @@ def main():
         run(cxx, "-std=c++11", "-Wall", "-Wextra", "-Werror", str(stub),
             str(work / "core.o"), "-o", str(work / "sketch"))
         run(str(work / "sketch"))
+        if sys.platform == "darwin":
+            run(cc, *flags, "-fobjc-arc", str(ROOT / "host/gui.m"),
+                str(CORE / "noise_core.c"), "-lm", "-framework", "Cocoa",
+                "-framework", "AudioToolbox", "-o", str(work / "noise_gui"))
         print("WAV, CLI, all surfaces, and C/C++ linkage checks passed")
 
 

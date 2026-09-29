@@ -70,6 +70,7 @@ Testing/
 out/
 *.wav
 host/noise_host
+host/noise_gui
 !host/Makefile
 
 # Local reference copies; redistribution rights are not established.
