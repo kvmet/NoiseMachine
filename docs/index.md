@@ -76,8 +76,8 @@ Diameters are uniform within the selected bin. The largest bin ends at
 uniform sampling within bins are implementation choices.
 
 Each arrival independently samples a material using `surface_weight`.
-Weights need not sum to one. The defaults are water 0.35, dirt 0.20,
-leaf 0.25, concrete 0.15, glass 0.025, and metal 0.025.
+Weights need not sum to one. The defaults are water 0.37, dirt 0.21,
+leaf 0.26, concrete 0.15, glass 0.005, and metal 0.005.
 
 The azimuth is uniform over a circle. Radial distance is
 
@@ -166,8 +166,8 @@ amplitude:
 - Dirt: (450, 1200), (1100, 1800), gain 0.35.
 - Leaf: (1800, 800), (4200, 1400), gain 0.50.
 - Concrete: (1400, 1400), (3700, 2200), gain 0.45.
-- Glass: (3200, 160), (7100, 260), gain 0.65.
-- Metal: (1700, 90), (4300, 150), gain 0.80.
+- Glass: (3200, 160), (7100, 260), gain 0.325.
+- Metal: (1700, 90), (4300, 150), gain 0.40.
 
 Each impact multiplies both frequencies by one uniform factor between
 0.85 and 1.15. The presets represent different resonant responses, but
@@ -289,11 +289,12 @@ response, so an independently tunable one-pole filter supplies a broad
 rear cue:
 
     rear = (1-cos φ)/2
-    cutoff = 18000 - 12000 × rear
+    cutoff = 18000 - 15000 × rear
     α_lp = 1-exp(-2π × cutoff/44100)
     low[n] = low[n-1] + α_lp × (source[n]-low[n-1])
     direct[n] = source[n] + rear_amount × (low[n]-source[n])
 
+The cutoff ranges from 18 kHz in front to 3 kHz directly behind.
 This rear filter is a sound design choice; it does not guarantee
 front/back discrimination. Headphones preserve the separate ear signals.
 Speaker playback introduces acoustic crossfeed; no crosstalk cancellation

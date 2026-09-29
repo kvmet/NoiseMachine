@@ -60,11 +60,14 @@ Run `./host/noise_host -h` for usage.
 - `-l NUMBER`, `-u NUMBER`: lower and upper varying-intensity bounds.
   Defaults: 0.15 and 0.85. An explicit initial intensity must be within them.
 - `-m mixed|water|dirt|leaf|concrete|glass|metal`: rain material. Default: mixed.
+  The mix is 37% water, 21% dirt, 26% leaves, 15% concrete, and 0.5% each
+  glass and metal.
 - `-n NUMBER`: arrival rate at intensity one, from 0 to 2000/s. Default: 900.
 - `-b METRES`: ear spacing and head diameter, from 0 to 0.5. Default: 0.18.
 - `-a NUMBER`: head effect from 0 to 1. Default: 1. Zero retains geometric
   mic delay and attenuation while disabling shadowing and diffraction.
 - `-f NUMBER`: rear filter strength from 0 to 1. Default: 1; zero bypasses it.
+  At full strength, the cutoff ranges from 18 kHz in front to 3 kHz behind.
 - `-e NUMBER`: reverb gain from 0 to 1. Default: 0.12.
 - `-g NUMBER`: master gain from 0 to 1. Default: 0.8.
 - `-s INTEGER`: 32-bit seed. Default: 1; zero aliases one.

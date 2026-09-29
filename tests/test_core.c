@@ -326,13 +326,33 @@ static void test_spatial_bypass_and_distance(void) {
   assert(noise_init(&b, &c, 3) == NOISE_OK);
   assert(noise_trigger_drop(&b, &drop) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  double front_high = channel_amplitude(8000.0, 0);
+  double rear_real = 0.0, rear_imaginary = 0.0;
   double front_energy = 0, rear_energy = 0;
   for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) {
     noise_fill(&b, frame, 1);
     front_energy += (double)audio[2 * n] * audio[2 * n];
     rear_energy += (double)frame[0] * frame[0];
+    double phase = 2.0 * TEST_PI * 8000.0 * n / NOISE_SAMPLE_RATE_HZ;
+    rear_real += frame[0] * cos(phase);
+    rear_imaginary += frame[0] * sin(phase);
   }
   assert(rear_energy < 0.8 * front_energy);
+  double rear_high = 2.0 * hypot(rear_real, rear_imaginary) / NOISE_SAMPLE_RATE_HZ;
+  assert(rear_high < 0.45 * front_high);
+
+  c.rear_amount = 0.0f;
+  assert(noise_init(&a, &c, 3) == NOISE_OK);
+  assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
+  drop.position.angle_rad = 0.0f;
+  assert(noise_init(&b, &c, 3) == NOISE_OK);
+  assert(noise_trigger_drop(&b, &drop) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) {
+    noise_fill(&b, frame, 1);
+    assert(audio[2 * n] == frame[0]);
+    assert(audio[2 * n + 1] == frame[1]);
+  }
 }
 
 static void test_spatial_extremes(void) {

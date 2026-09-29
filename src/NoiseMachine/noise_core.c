@@ -81,12 +81,12 @@ void noise_config_default(noise_config *c) {
   c->weather_step_s = 8.0f;
   c->rain_slew_s = 2.0f;
   c->max_drops_per_s = 900.0f;
-  c->surface_weight[WATER] = 0.35f;
-  c->surface_weight[DIRT] = 0.20f;
-  c->surface_weight[LEAF] = 0.25f;
+  c->surface_weight[WATER] = 0.37f;
+  c->surface_weight[DIRT] = 0.21f;
+  c->surface_weight[LEAF] = 0.26f;
   c->surface_weight[CONCRETE] = 0.15f;
-  c->surface_weight[GLASS] = 0.025f;
-  c->surface_weight[METAL] = 0.025f;
+  c->surface_weight[GLASS] = 0.005f;
+  c->surface_weight[METAL] = 0.005f;
   c->min_distance_m = 0.75f;
   c->max_distance_m = 5.0f;
   c->fall_height_m = 20.0f;
@@ -166,8 +166,8 @@ static const float material_modes[NOISE_SURFACE_COUNT][5] = {
   {450.0f, 1200.0f, 1100.0f, 1800.0f, 0.35f},
   {1800.0f, 800.0f, 4200.0f, 1400.0f, 0.5f},
   {1400.0f, 1400.0f, 3700.0f, 2200.0f, 0.45f},
-  {3200.0f, 160.0f, 7100.0f, 260.0f, 0.65f},
-  {1700.0f, 90.0f, 4300.0f, 150.0f, 0.8f}
+  {3200.0f, 160.0f, 7100.0f, 260.0f, 0.325f},
+  {1700.0f, 90.0f, 4300.0f, 150.0f, 0.4f}
 };
 
 static void spatial_init(noise_drop_voice *voice, const noise_config *config,
@@ -213,7 +213,7 @@ static void spatial_init(noise_drop_voice *voice, const noise_config *config,
     voice->delay_weight[ear][3] = (f + 1.0f) * f * (f - 1.0f) / 6.0f;
   }
   float rear = 0.5f * (1.0f - cosf(position.angle_rad));
-  float cutoff = 18000.0f - 12000.0f * rear;
+  float cutoff = 18000.0f - 15000.0f * rear;
   voice->lowpass_alpha = -expm1f(-2.0f * NOISE_PI * cutoff / NOISE_SAMPLE_RATE_HZ);
   voice->filter_tail = 256;
 }
