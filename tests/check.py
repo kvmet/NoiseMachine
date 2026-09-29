@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "src" / "NoiseMachine"
 CORE_SOURCES = [str(path) for path in sorted(CORE.glob("*.c"))]
 # Host modules without platform frameworks, shared by the GUI and the host tests.
-HOST_SOURCES = [str(ROOT / "host" / name) for name in ("audio_mailbox.c",)]
+HOST_SOURCES = [str(ROOT / "host" / name) for name in ("audio_mailbox.c", "gui_controls.c")]
 GUI_SOURCES = [str(ROOT / "host" / name) for name in ("gui.m", "audio_output.c")]
 
 
