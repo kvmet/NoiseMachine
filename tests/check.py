@@ -10,6 +10,7 @@ import wave
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "src" / "NoiseMachine"
+CORE_SOURCES = [str(path) for path in sorted(CORE.glob("*.c"))]
 
 
 def run(*args, **kwargs):
@@ -21,11 +22,11 @@ def main():
         work = Path(directory)
         cc = os.environ.get("CC", "cc")
         flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Wpedantic", "-Werror", f"-I{CORE}"]
-        run(cc, *flags, str(ROOT / "tests/test_core.c"), str(CORE / "noise_core.c"),
+        run(cc, *flags, str(ROOT / "tests/test_core.c"), *CORE_SOURCES,
             "-lm", "-o", str(work / "test_core"))
         run(str(work / "test_core"))
         host = work / "noise_host"
-        run(cc, *flags, str(ROOT / "host/main.c"), str(CORE / "noise_core.c"),
+        run(cc, *flags, str(ROOT / "host/main.c"), *CORE_SOURCES,
             "-lm", "-o", str(host))
         destination = work / "audio.wav"
         for kind in ("white", "pink", "hum50", "hum60", "wind", "crickets", "cicadas",
@@ -63,7 +64,10 @@ def main():
             assert destination.read_bytes() == b"preserve existing file", args
         # Link the actual sketch as C++ against a C-compiled engine without an SDK.
         cxx = os.environ.get("CXX", "c++")
-        run(cc, *flags, "-c", str(CORE / "noise_core.c"), "-o", str(work / "core.o"))
+        objects = []
+        for source in CORE_SOURCES:
+            objects.append(str(work / (Path(source).stem + ".o")))
+            run(cc, *flags, "-c", source, "-o", objects[-1])
         stub = work / "sketch.cpp"
         stub.write_text(
             'struct SerialStub { void begin(int) {} void println(const char *) {} };\n'
@@ -72,11 +76,11 @@ def main():
             'int main() { setup(); loop(); }\n'
         )
         run(cxx, "-std=c++11", "-Wall", "-Wextra", "-Werror", str(stub),
-            str(work / "core.o"), "-o", str(work / "sketch"))
+            *objects, "-o", str(work / "sketch"))
         run(str(work / "sketch"))
         if sys.platform == "darwin":
             run(cc, *flags, "-fobjc-arc", str(ROOT / "host/gui.m"),
-                str(CORE / "noise_core.c"), "-lm", "-framework", "Cocoa",
+                *CORE_SOURCES, "-lm", "-framework", "Cocoa",
                 "-framework", "AudioToolbox", "-o", str(work / "noise_gui"))
         print("WAV, CLI, all surfaces, and C/C++ linkage checks passed")
 
