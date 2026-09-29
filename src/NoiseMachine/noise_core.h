@@ -165,7 +165,7 @@ typedef struct noise_thunder_segment {
   float start; /* Frames after the strike's first arrival. */
   float width; /* Arrival spread between the segment's ends, frames. */
   float gain[2]; /* Per channel, divided by width. */
-  float pulse_rate; /* Fine-tortuosity impulses per frame within the width. */
+  float roughness; /* Fine-tortuosity noise per sqrt(frame), relative to gain. */
 } noise_thunder_segment;
 
 typedef struct noise_biquad {
@@ -180,7 +180,7 @@ typedef struct noise_thunder_voice {
   unsigned next; /* Segments from this index have not arrived. */
   uint32_t elapsed;
   uint32_t length; /* Zero marks a free voice. */
-  noise_biquad pulse[2]; /* Band-pass at 1/period turns each impulse into an N-wave. */
+  noise_biquad pulse[2]; /* Band-pass at 1/period shapes excitation into N-waves. */
   noise_biquad air[2][2]; /* Fourth-order Butterworth low-pass per channel. */
 } noise_thunder_voice;
 

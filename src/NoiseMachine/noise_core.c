@@ -734,7 +734,10 @@ static void add_thunder_segment(thunder_build *b, const float from[3], const flo
   float pan = 0.25f * NOISE_PI * (1.0f + (horizontal > 0.0f ? mid[0] / horizontal : 0.0f));
   segment->gain[0] = amplitude * cosf(pan);
   segment->gain[1] = amplitude * sinf(pan);
-  segment->pulse_rate = length_m / (THUNDER_FINE_STEP_M * segment->width);
+  /* Fine steps each leave a random pulse; at one per 3 m their Poisson sum over a frame
+     has variance roughness^2 * overlap. */
+  float steps_per_frame = length_m / (THUNDER_FINE_STEP_M * segment->width);
+  segment->roughness = THUNDER_ROUGHNESS / sqrtf(steps_per_frame);
 }
 
 /* Random walk with Gaussian direction changes, pulled toward a preferred direction. */
@@ -875,11 +878,7 @@ static void thunder_voice_next(uint32_t *rng, noise_thunder_voice *voice, float 
     float x = t - segment[i].start;
     float overlap = fminf(x + 1.0f, segment[i].width) - fmaxf(x, 0.0f);
     if (overlap <= 0.0f) continue;
-    float share = overlap;
-    /* Each fine step deviates randomly from the segment and leaves its own pulse. */
-    if (random_unit(rng) < segment[i].pulse_rate) {
-      share += THUNDER_ROUGHNESS * random_gaussian(rng) / segment[i].pulse_rate;
-    }
+    float share = overlap + segment[i].roughness * random_gaussian(rng) * sqrtf(overlap);
     excitation[0] += segment[i].gain[0] * share;
     excitation[1] += segment[i].gain[1] * share;
   }

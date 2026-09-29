@@ -366,7 +366,7 @@ static void test_thunder(void) {
     v->segment[0].start = starts[w];
     v->segment[0].width = widths[w];
     v->segment[0].gain[0] = v->segment[0].gain[1] = 0.05f / widths[w];
-    v->segment[0].pulse_rate = 0.0f;
+    v->segment[0].roughness = 0.0f;
     v->length = 4000;
     noise_fill(&a, audio, 4000);
     int positive = 0, negative = 0;
