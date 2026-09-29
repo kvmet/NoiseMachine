@@ -33,6 +33,23 @@ typedef enum impact_surface {
   NOISE_SURFACE_COUNT
 } impact_surface;
 
+typedef enum weather_mod_destination {
+  WEATHER_MOD_ARRIVAL_RATE = 0,
+  WEATHER_MOD_DROP_SIZE,
+  WEATHER_MOD_RAIN_GAIN,
+  WEATHER_MOD_REVERB_GAIN,
+  WEATHER_MOD_FALL_HEIGHT,
+  WEATHER_MOD_MIN_DISTANCE,
+  WEATHER_MOD_MAX_DISTANCE,
+  WEATHER_MOD_WATER_WEIGHT,
+  WEATHER_MOD_DIRT_WEIGHT,
+  WEATHER_MOD_LEAF_WEIGHT,
+  WEATHER_MOD_CONCRETE_WEIGHT,
+  WEATHER_MOD_GLASS_WEIGHT,
+  WEATHER_MOD_METAL_WEIGHT,
+  NOISE_WEATHER_MOD_COUNT
+} weather_mod_destination;
+
 typedef enum noise_result {
   NOISE_OK = 0,
   NOISE_INVALID_CONFIG,
@@ -72,6 +89,7 @@ typedef struct noise_config {
   float head_amount; /* 0: spaced microphones, 1: spherical head. */
   float rear_amount; /* 0: bypass rear filter, 1: full rear filter. */
   float reverb_gain; /* Rain send is before distance attenuation. */
+  float weather_mod_amount[NOISE_WEATHER_MOD_COUNT]; /* Bipolar depths, -1..1. */
 } noise_config;
 
 typedef struct noise_mode {

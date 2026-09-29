@@ -36,6 +36,19 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlHead,
   NoiseControlRear,
   NoiseControlReverb,
+  NoiseControlModArrival,
+  NoiseControlModSize,
+  NoiseControlModRainGain,
+  NoiseControlModReverb,
+  NoiseControlModFallHeight,
+  NoiseControlModMinDistance,
+  NoiseControlModMaxDistance,
+  NoiseControlModWater,
+  NoiseControlModDirt,
+  NoiseControlModLeaf,
+  NoiseControlModConcrete,
+  NoiseControlModGlass,
+  NoiseControlModMetal,
   NoiseControlCount
 };
 
@@ -102,6 +115,24 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   config.head_amount = [self controlValue:NoiseControlHead];
   config.rear_amount = [self controlValue:NoiseControlRear];
   config.reverb_gain = [self controlValue:NoiseControlReverb];
+  config.weather_mod_amount[WEATHER_MOD_ARRIVAL_RATE] =
+      [self controlValue:NoiseControlModArrival];
+  config.weather_mod_amount[WEATHER_MOD_DROP_SIZE] =
+      [self controlValue:NoiseControlModSize];
+  config.weather_mod_amount[WEATHER_MOD_RAIN_GAIN] =
+      [self controlValue:NoiseControlModRainGain];
+  config.weather_mod_amount[WEATHER_MOD_REVERB_GAIN] =
+      [self controlValue:NoiseControlModReverb];
+  config.weather_mod_amount[WEATHER_MOD_FALL_HEIGHT] =
+      [self controlValue:NoiseControlModFallHeight];
+  config.weather_mod_amount[WEATHER_MOD_MIN_DISTANCE] =
+      [self controlValue:NoiseControlModMinDistance];
+  config.weather_mod_amount[WEATHER_MOD_MAX_DISTANCE] =
+      [self controlValue:NoiseControlModMaxDistance];
+  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
+    config.weather_mod_amount[WEATHER_MOD_WATER_WEIGHT + i] =
+        [self controlValue:NoiseControlModWater + i];
+  }
   return config;
 }
 
@@ -279,6 +310,10 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                                         target:self action:@selector(sliderChanged:)];
   slider.tag = control;
   slider.continuous = YES;
+  if (minimum == -1.0 && maximum == 1.0) {
+    slider.numberOfTickMarks = 3;
+    slider.allowsTickMarkValuesOnly = NO;
+  }
   [slider.widthAnchor constraintEqualToConstant:280.0].active = YES;
   _sliders[control] = slider;
 
@@ -521,8 +556,54 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                  value:defaults.reverb_gain minimum:0 maximum:1 logarithmic:NO]
   ]];
 
+  NSView *weatherMod = [self tabViewWithRows:@[
+      [self sectionLabel:@"Weather intensity attenuverters"],
+      [NSTextField labelWithString:@"+ follows intensity     0 disconnects     - inverts"],
+      [self sliderRow:@"Arrival density" control:NoiseControlModArrival
+                 value:defaults.weather_mod_amount[WEATHER_MOD_ARRIVAL_RATE]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Drop size" control:NoiseControlModSize
+                 value:defaults.weather_mod_amount[WEATHER_MOD_DROP_SIZE]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Rain gain" control:NoiseControlModRainGain
+                 value:defaults.weather_mod_amount[WEATHER_MOD_RAIN_GAIN]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Reverb gain" control:NoiseControlModReverb
+                 value:defaults.weather_mod_amount[WEATHER_MOD_REVERB_GAIN]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Fall height" control:NoiseControlModFallHeight
+                 value:defaults.weather_mod_amount[WEATHER_MOD_FALL_HEIGHT]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Minimum distance" control:NoiseControlModMinDistance
+                 value:defaults.weather_mod_amount[WEATHER_MOD_MIN_DISTANCE]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Maximum distance" control:NoiseControlModMaxDistance
+                 value:defaults.weather_mod_amount[WEATHER_MOD_MAX_DISTANCE]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sectionLabel:@"Surface weights"],
+      [self sliderRow:@"Water" control:NoiseControlModWater
+                 value:defaults.weather_mod_amount[WEATHER_MOD_WATER_WEIGHT]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Dirt" control:NoiseControlModDirt
+                 value:defaults.weather_mod_amount[WEATHER_MOD_DIRT_WEIGHT]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Leaf" control:NoiseControlModLeaf
+                 value:defaults.weather_mod_amount[WEATHER_MOD_LEAF_WEIGHT]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Concrete" control:NoiseControlModConcrete
+                 value:defaults.weather_mod_amount[WEATHER_MOD_CONCRETE_WEIGHT]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Glass" control:NoiseControlModGlass
+                 value:defaults.weather_mod_amount[WEATHER_MOD_GLASS_WEIGHT]
+               minimum:-1 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Metal" control:NoiseControlModMetal
+                 value:defaults.weather_mod_amount[WEATHER_MOD_METAL_WEIGHT]
+               minimum:-1 maximum:1 logarithmic:NO]
+  ]];
+
   NSTabView *tabs = [[NSTabView alloc] initWithFrame:NSZeroRect];
-  for (NSArray *item in @[@[@"Mixer", mixer], @[@"Rain", rain], @[@"Spatial", spatial]]) {
+  for (NSArray *item in @[@[@"Mixer", mixer], @[@"Rain", rain],
+                           @[@"Weather Mod", weatherMod], @[@"Spatial", spatial]]) {
     NSTabViewItem *tab = [[NSTabViewItem alloc] initWithIdentifier:item[0]];
     tab.label = item[0];
     tab.view = item[1];

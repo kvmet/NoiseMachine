@@ -67,6 +67,9 @@ static int valid_config(const noise_config *c) {
   for (unsigned i = 0; i < NOISE_KIND_COUNT; ++i) {
     if (!in_range(c->ambient_gain[i], 0.0f, 1.0f)) return 0;
   }
+  for (unsigned i = 0; i < NOISE_WEATHER_MOD_COUNT; ++i) {
+    if (!in_range(c->weather_mod_amount[i], -1.0f, 1.0f)) return 0;
+  }
   float sum = 0.0f;
   for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
     if (!in_range(c->surface_weight[i], 0.0f, 1000.0f)) return 0;
@@ -98,6 +101,8 @@ void noise_config_default(noise_config *c) {
   c->head_amount = 1.0f;
   c->rear_amount = 1.0f;
   c->reverb_gain = 0.12f;
+  c->weather_mod_amount[WEATHER_MOD_ARRIVAL_RATE] = 1.0f;
+  c->weather_mod_amount[WEATHER_MOD_DROP_SIZE] = 1.0f;
 }
 
 noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t seed) {
@@ -270,10 +275,62 @@ noise_result noise_trigger_drop(noise_gen *gen, const droplet *drop) {
   return start_drop(gen, drop);
 }
 
+static float weather_mod_linear(float base, float amount, float intensity,
+                                float low, float high) {
+  float value = base + amount * (intensity - 0.5f) * (high - low);
+  return fminf(high, fmaxf(low, value));
+}
+
+static float weather_mod_log(float base, float amount, float intensity,
+                             float low, float high) {
+  float value = logf(base) + amount * (intensity - 0.5f) * (logf(high) - logf(low));
+  return fminf(high, fmaxf(low, expf(value)));
+}
+
+static float arrival_level(float intensity, float amount) {
+  if (amount >= 0.0f) return 1.0f - amount + amount * intensity;
+  return 1.0f + amount - amount * (1.0f - intensity);
+}
+
+static impact_surface choose_surface(noise_gen *gen, float intensity) {
+  int modulated = 0;
+  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
+    modulated |= gen->config.weather_mod_amount[WEATHER_MOD_WATER_WEIGHT + i] != 0.0f;
+  }
+  float choice = random_unit(&gen->drop_rng);
+  if (!modulated) {
+    unsigned surface = WATER;
+    while (surface + 1 < NOISE_SURFACE_COUNT && choice >= gen->surface_cdf[surface]) ++surface;
+    return (impact_surface)surface;
+  }
+
+  float source = 2.0f * intensity - 1.0f;
+  float weight[NOISE_SURFACE_COUNT];
+  float total = 0.0f;
+  for (unsigned i = 0; i < NOISE_SURFACE_COUNT; ++i) {
+    float amount = gen->config.weather_mod_amount[WEATHER_MOD_WATER_WEIGHT + i];
+    float scale = fmaxf(0.001f, 1.0f + amount * source);
+    weight[i] = gen->config.surface_weight[i] * scale;
+    total += weight[i];
+  }
+  float target = choice * total;
+  float cumulative = 0.0f;
+  unsigned surface = WATER;
+  while (surface + 1 < NOISE_SURFACE_COUNT) {
+    cumulative += weight[surface];
+    if (target < cumulative) break;
+    ++surface;
+  }
+  return (impact_surface)surface;
+}
+
 static void spawn_rain(noise_gen *gen) {
   float intensity = gen->state.rain_intensity;
-  float blend = intensity < 0.5f ? intensity * 2.0f : (intensity - 0.5f) * 2.0f;
-  unsigned lo = intensity < 0.5f ? 0u : 1u;
+  float size_intensity = 0.5f +
+      gen->config.weather_mod_amount[WEATHER_MOD_DROP_SIZE] * (intensity - 0.5f);
+  float blend = size_intensity < 0.5f ? size_intensity * 2.0f :
+      (size_intensity - 0.5f) * 2.0f;
+  unsigned lo = size_intensity < 0.5f ? 0u : 1u;
   static const float distribution[3][2] = {{0.84f, 0.16f}, {0.32f, 0.61f}, {0.24f, 0.52f}};
   float small = distribution[lo][0] + blend * (distribution[lo + 1][0] - distribution[lo][0]);
   float medium = distribution[lo][1] + blend * (distribution[lo + 1][1] - distribution[lo][1]);
@@ -289,16 +346,22 @@ static void spawn_rain(noise_gen *gen) {
   terminal *= 0.01f;
   droplet drop;
   drop.radius_m = diameter_mm * 0.0005f;
+  float fall_height = weather_mod_log(gen->config.fall_height_m,
+      gen->config.weather_mod_amount[WEATHER_MOD_FALL_HEIGHT], intensity, 0.01f, 1000.0f);
   drop.velocity_m_s = terminal * sqrtf(-expm1f(
-      -2.0f * NOISE_GRAVITY * gen->config.fall_height_m / (terminal * terminal)));
-  float material = random_unit(&gen->drop_rng);
-  unsigned surface = WATER;
-  while (surface + 1 < NOISE_SURFACE_COUNT && material >= gen->surface_cdf[surface]) ++surface;
-  drop.surface = (impact_surface)surface;
+      -2.0f * NOISE_GRAVITY * fall_height / (terminal * terminal)));
+  drop.surface = choose_surface(gen, intensity);
   drop.bubble_radius_m = drop.surface == WATER && size < small ?
       0.00016f + 0.00031f * random_unit(&gen->drop_rng) : 0.0f;
-  float near = gen->config.min_distance_m;
-  float far = gen->config.max_distance_m;
+  float near = weather_mod_log(gen->config.min_distance_m,
+      gen->config.weather_mod_amount[WEATHER_MOD_MIN_DISTANCE], intensity, 0.25f, 100.0f);
+  float far = weather_mod_log(gen->config.max_distance_m,
+      gen->config.weather_mod_amount[WEATHER_MOD_MAX_DISTANCE], intensity, 0.25f, 100.0f);
+  if (near > far) {
+    float swap = near;
+    near = far;
+    far = swap;
+  }
   drop.position.distance_m = sqrtf(near * near + random_unit(&gen->drop_rng) *
                                    (far * far - near * near));
   drop.position.angle_rad = 2.0f * NOISE_PI * random_unit(&gen->drop_rng);
@@ -358,7 +421,8 @@ static float ambient_next(noise_gen *gen) {
   return sample;
 }
 
-static void reverb_next(noise_gen *gen, float send, float *left, float *right) {
+static void reverb_next(noise_gen *gen, float send, float gain,
+                        float *left, float *right) {
   float delay[NOISE_REVERB_LINES];
   for (unsigned i = 0; i < NOISE_REVERB_LINES; ++i) {
     float value = gen->reverb[reverb_offset[i] + gen->reverb_position[i]];
@@ -379,12 +443,11 @@ static void reverb_next(noise_gen *gen, float send, float *left, float *right) {
         0.408248290f * send + gen->reverb_feedback[i] * feedback[i];
     if (++gen->reverb_position[i] == reverb_length[i]) gen->reverb_position[i] = 0;
   }
-  float wet = gen->config.reverb_gain;
-  *left += wet * (0.577350269f * delay[0] + 0.288675135f * delay[1] -
-                  0.288675135f * delay[2] - 0.577350269f * delay[3] -
-                  0.288675135f * delay[4] + 0.288675135f * delay[5]);
-  *right += wet * (0.5f * delay[1] + 0.5f * delay[2] -
-                   0.5f * delay[4] - 0.5f * delay[5]);
+  *left += gain * (0.577350269f * delay[0] + 0.288675135f * delay[1] -
+                   0.288675135f * delay[2] - 0.577350269f * delay[3] -
+                   0.288675135f * delay[4] + 0.288675135f * delay[5]);
+  *right += gain * (0.5f * delay[1] + 0.5f * delay[2] -
+                    0.5f * delay[4] - 0.5f * delay[5]);
 }
 
 static int16_t to_sample(noise_gen *gen, float value) {
@@ -402,9 +465,15 @@ static int16_t to_sample(noise_gen *gen, float value) {
 size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
   for (size_t frame = 0; frame < frames; ++frame) {
     weather_next(gen);
-    if (gen->config.rain_gain > 0.0f && gen->state.rain_intensity > 0.0f) {
-      float probability = gen->state.rain_intensity * gen->config.max_drops_per_s /
-                          NOISE_SAMPLE_RATE_HZ;
+    float intensity = gen->state.rain_intensity;
+    float rain_gain = weather_mod_linear(gen->config.rain_gain,
+        gen->config.weather_mod_amount[WEATHER_MOD_RAIN_GAIN], intensity, 0.0f, 1.0f);
+    float reverb_gain = weather_mod_linear(gen->config.reverb_gain,
+        gen->config.weather_mod_amount[WEATHER_MOD_REVERB_GAIN], intensity, 0.0f, 1.0f);
+    float density = arrival_level(intensity,
+        gen->config.weather_mod_amount[WEATHER_MOD_ARRIVAL_RATE]);
+    if (rain_gain > 0.0f && density > 0.0f) {
+      float probability = density * gen->config.max_drops_per_s / NOISE_SAMPLE_RATE_HZ;
       if (random_unit(&gen->arrival_rng) < probability) spawn_rain(gen);
     }
     float left = 0.0f, right = 0.0f, send = 0.0f;
@@ -417,7 +486,7 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
         source += mode_next(&voice->mode[m]);
         remaining += voice->mode[m].remaining + voice->mode[m].delay;
       }
-      source *= gen->config.rain_gain;
+      source *= rain_gain;
       send += source;
       voice->lowpass_state += voice->lowpass_alpha * (source - voice->lowpass_state);
       float direct = source + gen->config.rear_amount * (voice->lowpass_state - source);
@@ -447,7 +516,10 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
     gen->direct[0][gen->direct_position] = 0.0f;
     gen->direct[1][gen->direct_position] = 0.0f;
     if (++gen->direct_position == NOISE_DIRECT_SAMPLES) gen->direct_position = 0;
-    if (gen->config.reverb_gain > 0.0f) reverb_next(gen, send, &left, &right);
+    if (gen->config.reverb_gain > 0.0f ||
+        gen->config.weather_mod_amount[WEATHER_MOD_REVERB_GAIN] != 0.0f) {
+      reverb_next(gen, send, reverb_gain, &left, &right);
+    }
     float ambient = ambient_next(gen);
     out[2 * frame] = to_sample(gen, (left + ambient) * gen->config.master_gain);
     out[2 * frame + 1] = to_sample(gen, (right + ambient) * gen->config.master_gain);

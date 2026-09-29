@@ -361,6 +361,26 @@ intensity remains fixed. With both bounds zero, varying rain stays silent.
 The accumulator carries rounding error between frames so a slow transition
 does not stall when an individual step is smaller than a float can represent.
 
+## Weather modulation
+
+`weather_mod_amount` routes the current rain intensity to sound parameters.
+Each amount is an attenuverter from -1 to 1. Zero disconnects a route, positive
+amounts follow intensity, and negative amounts invert it. Arrival rate and drop
+size default to 1 to preserve the basic rain model; all other routes default to
+zero.
+
+For arrival rate, a positive amount blends between the configured maximum rate
+and the intensity-scaled rate. A negative amount blends toward inverse
+intensity. Drop size blends between the medium distribution and the light to
+very-heavy intensity curve, or its inverse. Gain destinations use linear
+modulation around their base setting at intensity 0.5. Distance and fall height
+use the same rule in logarithmic space.
+
+Surface modulation multiplies each base weight by `1 + amount × (2I-1)`, with a
+0.001 floor, then normalizes all six effective weights. The floor keeps a valid
+distribution when every route reaches its negative extreme. A zero base weight
+remains zero.
+
 ## API and limits
 
 Initialize a `noise_config` with `noise_config_default`, then edit values
@@ -395,6 +415,7 @@ Configuration ranges are:
 - Distance bounds: 0.25 to 100 m, ordered; equal bounds make a ring.
 - Falling height: 0.01 to 1000 m.
 - Stereo width: 0 to 0.5 m; head and rear amounts: 0 to 1.
+- Weather modulation amounts: -1 to 1 each.
 
 Four separate random streams drive ambient samples, arrivals, drop
 properties, and weather. Enabling ambient sound cannot change the rain
@@ -412,7 +433,7 @@ and peak voice count.
 ## ESP32 and validation
 
 The sample rate, channel count, and pool size are compile-time constants.
-The engine occupies 52,672 bytes with the tested host ABI, plus 1,024
+The engine occupies 55,136 bytes with the tested host ABI, plus 1,024
 bytes for a 256-frame PCM buffer. Confirm `sizeof(noise_gen)` on the
 target ABI. Keep the generator in static storage, not a small task stack. Buffers are
 caller-owned. Trigonometry, exponentials, and square roots for drops run

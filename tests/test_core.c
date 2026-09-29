@@ -47,6 +47,11 @@ static void test_validation(void) {
   c = silent_config();
   c.max_drops_per_s = INFINITY;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.weather_mod_amount[WEATHER_MOD_REVERB_GAIN] = 1.01f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c.weather_mod_amount[WEATHER_MOD_REVERB_GAIN] = NAN;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   droplet drop = water_drop();
   drop.bubble_radius_m = 0.0001f;
   assert(noise_trigger_drop(&a, &drop) == NOISE_INVALID_DROP);
@@ -450,6 +455,45 @@ static void test_slow_weather_slew(void) {
   assert(fabs(a.state.rain_intensity - (1.0 - exp(-5.0))) < 1e-6);
 }
 
+static void test_weather_modulation(void) {
+  noise_config c = silent_config();
+  c.rain_intensity = 0.0f;
+  c.max_drops_per_s = 100.0f;
+  assert(noise_init(&a, &c, 21) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  assert(a.state.generated_drops == 0);
+
+  c.weather_mod_amount[WEATHER_MOD_ARRIVAL_RATE] = 0.0f;
+  assert(noise_init(&a, &c, 21) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  assert(a.state.generated_drops > 50);
+
+  c.rain_intensity = 1.0f;
+  c.weather_mod_amount[WEATHER_MOD_ARRIVAL_RATE] = -1.0f;
+  assert(noise_init(&a, &c, 21) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  assert(a.state.generated_drops == 0);
+
+  c.max_drops_per_s = 0.0f;
+  c.rain_intensity = 0.0f;
+  c.rain_gain = 0.5f;
+  c.weather_mod_amount[WEATHER_MOD_RAIN_GAIN] = 1.0f;
+  droplet drop = water_drop();
+  drop.bubble_radius_m = 0.0f;
+  assert(noise_init(&a, &c, 21) == NOISE_OK);
+  assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
+  noise_fill(&a, audio, 1024);
+  for (unsigned i = 0; i < 2048; ++i) assert(audio[i] == 0);
+
+  c.rain_intensity = 1.0f;
+  assert(noise_init(&a, &c, 21) == NOISE_OK);
+  assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
+  noise_fill(&a, audio, 1024);
+  unsigned nonzero = 0;
+  for (unsigned i = 0; i < 2048; ++i) nonzero += audio[i] != 0;
+  assert(nonzero > 0);
+}
+
 static void test_output_saturation(void) {
   noise_config c = silent_config();
   c.rain_gain = 1.0f;
@@ -515,6 +559,7 @@ int main(void) {
   test_weather_and_arrivals();
   test_random_stream_separation();
   test_slow_weather_slew();
+  test_weather_modulation();
   test_output_saturation();
   test_reverb_decay();
   printf("core checks passed; engine size: %zu bytes\n", sizeof(noise_gen));
