@@ -16,7 +16,8 @@ extern "C" {
 #define NOISE_DIRECT_SAMPLES 128u
 #define NOISE_CRICKET_VOICES 4u
 #define NOISE_THUNDER_VOICES 2u
-#define NOISE_THUNDER_CLAPS 5u
+#define NOISE_THUNDER_SEGMENTS 256u
+#define NOISE_THUNDER_PULSES 128u
 
 typedef enum noise_kind {
   NOISE_KIND_WHITE = 0,
@@ -158,48 +159,31 @@ typedef struct noise_cricket_voice {
   uint32_t sounding_samples;
 } noise_cricket_voice;
 
-typedef struct noise_biquad {
-  float b0, b1, b2, a1, a2;
-  float state[2];
-} noise_biquad;
+typedef struct noise_thunder_segment {
+  float start; /* Frames after the strike's first arrival. */
+  float width; /* Arrival spread between the segment's ends, frames. */
+  float gain[2]; /* Per channel, divided by width. */
+  float pulse_rate; /* Fine-tortuosity pulses per frame within the width. */
+} noise_thunder_segment;
 
-typedef struct noise_thunder_clap {
-  noise_biquad band;
-  uint32_t start; /* Frames after the strike begins. */
-  uint32_t length;
-  float gain;
-  float frequency_hz; /* Falls linearly to half over the length. */
-  float impulse_probability; /* Per frame; zero selects a noise burst. */
-} noise_thunder_clap;
+typedef struct noise_thunder_pulse {
+  uint32_t start; /* Voice frame. */
+  float gain[2];
+} noise_thunder_pulse;
 
 typedef struct noise_thunder_voice {
+  noise_thunder_segment segment[NOISE_THUNDER_SEGMENTS]; /* Sorted by start. */
+  unsigned segments;
+  unsigned first; /* Segments before this index have ended. */
+  unsigned next; /* Segments from this index have not arrived. */
   uint32_t elapsed;
   uint32_t length; /* Zero marks a free voice. */
-  float channel_gain[2];
-  noise_thunder_clap clap[NOISE_THUNDER_CLAPS];
-  unsigned claps;
-  uint32_t clap_end;
-  float clap_air_alpha;
-  float clap_air_state;
-  float rumble_gain;
-  uint32_t rumble_length;
-  float rumble_cutoff_hz;
-  float rumble_alpha;
-  float rumble_lowpass[2][2];
-  float rumble_hold[2];
-  float rumble_phase;
-  float rumble_dc_input[2];
-  float rumble_dc_output[2];
-  float afterimage_gain;
-  uint32_t afterimage_length;
-  float afterimage_alpha;
-  float afterimage_lowpass[2];
-  noise_biquad afterimage_band[2];
-  float deepener_gain;
-  uint32_t deepener_length;
-  noise_biquad deepener_low[2];
-  noise_biquad deepener_high[2];
-  noise_biquad deepener_out[2];
+  float period; /* N-wave duration, frames. */
+  noise_thunder_pulse pulse[NOISE_THUNDER_PULSES]; /* FIFO; equal periods expire in order. */
+  unsigned pulse_head;
+  unsigned pulses;
+  float air_alpha;
+  float air[2][2];
 } noise_thunder_voice;
 
 typedef struct noise_drop_voice {

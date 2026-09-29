@@ -308,7 +308,7 @@ static void test_thunder(void) {
   assert(noise_trigger_thunder(&a, &strike) == NOISE_INVALID_STRIKE);
   assert(memcmp(&a, &b, sizeof(a)) == 0);
 
-  /* A strike retires within its longest jittered ramp and leaves exact silence. */
+  /* A strike retires after its last arrival and leaves exact silence. */
   strike.position.distance_m = 1000.0f;
   assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
   assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
@@ -335,15 +335,53 @@ static void test_thunder(void) {
   }
   assert(clap_ratio[1] < 0.5 * clap_ratio[0]);
 
-  /* Hard left and hard right swap channels exactly. */
+  /* Segments pan by their own azimuth, so a strike to the left is mostly left. */
   strike.position.distance_m = 2000.0f;
   strike.position.angle_rad = (float)(-TEST_PI / 2.0);
   assert(noise_init(&a, &c, 63) == NOISE_OK);
   assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
-  unsigned right_nonzero = 0;
-  for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) right_nonzero += audio[2 * n + 1] != 0;
-  assert(right_nonzero == 0);
+  double energy[2] = {0.0, 0.0};
+  for (unsigned n = 0; n < 2 * NOISE_SAMPLE_RATE_HZ; ++n) energy[n % 2] += (double)audio[n] * audio[n];
+  assert(energy[0] > 4.0 * energy[1]);
+
+  /* One hand-placed segment, air filter bypassed, renders the smeared N-wave exactly:
+     side-on it is the N-wave itself; end-on it splits into opposite parabolas. */
+  const float widths[2] = {0.25f, 300.0f};
+  double peak[2] = {0.0, 0.0};
+  unsigned last_nonzero[2] = {0, 0};
+  for (unsigned w = 0; w < 2; ++w) {
+    assert(noise_init(&a, &c, 66) == NOISE_OK);
+    assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
+    noise_thunder_voice *v = &a.thunder[0];
+    const double period = 441.0, gain = 0.5 / widths[w];
+    v->segments = 1;
+    v->segment[0].start = 0.0f;
+    v->segment[0].width = widths[w];
+    v->segment[0].gain[0] = v->segment[0].gain[1] = (float)gain;
+    v->segment[0].pulse_rate = 0.0f;
+    v->period = (float)period;
+    v->air_alpha = 1.0f;
+    v->length = 1000;
+    noise_fill(&a, audio, 1000);
+    for (unsigned n = 0; n < 1000; ++n) {
+      double x = n, integral[2];
+      for (unsigned k = 0; k < 2; ++k) {
+        double u = x - (k ? widths[w] : 0.0);
+        integral[k] = u <= 0.0 || u >= period ? 0.0 : u - u * u / period;
+      }
+      double expected = 32767.0 * gain * (integral[0] - integral[1]);
+      assert(fabs(audio[2 * n] - expected) <= 1.0 + 1e-3 * fabs(expected));
+      if (fabs(expected) > peak[w]) peak[w] = fabs(expected);
+      if (audio[2 * n] != 0) last_nonzero[w] = n;
+    }
+    if (w == 1) {
+      assert(audio[2 * 220] > 0);
+      assert(audio[2 * 520] < 0);
+    }
+  }
+  assert(peak[1] < 0.5 * peak[0]);
+  assert(last_nonzero[1] > last_nonzero[0] + 250);
 
   /* Automatic strikes: one at start, then about rate/min, including capacity losses. */
   c.thunder_rate_per_min = 20.0f;
