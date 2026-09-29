@@ -7,6 +7,8 @@
 #define NOISE_GRAVITY 9.81f
 #define NOISE_WATER_DENSITY 1000.0f
 #define NOISE_PRESSURE_PA 101325.0f
+#define THUNDER_UPDATE_FRAMES 32u
+#define THUNDER_REFERENCE_M 1000.0f
 
 static const unsigned reverb_length[NOISE_REVERB_LINES] = {
   739, 953, 1151, 1327, 1471, 1663
@@ -78,6 +80,10 @@ static int valid_config(const noise_config *c) {
       !in_range(c->cicada_pulse_rate_hz, 10.0f, 120.0f) ||
       !in_range(c->cicada_texture, 0.0f, 1.0f) ||
       !in_range(c->cicada_stereo_width, 0.0f, 1.0f) ||
+      !in_range(c->thunder_gain, 0.0f, 1.0f) ||
+      !in_range(c->thunder_rate_per_min, 0.0f, 20.0f) ||
+      !in_range(c->thunder_min_distance_m, 200.0f, 15000.0f) ||
+      !in_range(c->thunder_max_distance_m, c->thunder_min_distance_m, 15000.0f) ||
       !in_range(c->water_impact_gain_min, 0.0f, 2.0f) ||
       !in_range(c->water_impact_gain_max, c->water_impact_gain_min, 2.0f) ||
       !in_range(c->water_bubble_probability, 0.0f, 1.0f) ||
@@ -122,6 +128,9 @@ void noise_config_default(noise_config *c) {
   c->cicada_pulse_rate_hz = 45.0f;
   c->cicada_texture = 0.35f;
   c->cicada_stereo_width = 0.75f;
+  c->thunder_rate_per_min = 2.0f;
+  c->thunder_min_distance_m = 1000.0f;
+  c->thunder_max_distance_m = 8000.0f;
   c->master_gain = 0.8f;
   c->rain_gain = 0.5f;
   c->min_rain_intensity = 0.15f;
@@ -165,6 +174,7 @@ noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t see
   gen->wind_rng = stream_seed(seed, 0x1715609du);
   gen->cricket_rng = stream_seed(seed, 0xb54cda58u);
   gen->cicada_rng = stream_seed(seed, 0x94d049bbu);
+  gen->thunder_rng = stream_seed(seed, 0x2545f491u);
   gen->arrival_rng = stream_seed(seed, 0x3c6ef372u);
   gen->drop_rng = stream_seed(seed, 0xdaa66d2bu);
   gen->weather_rng = stream_seed(seed, 0x78dde6e4u);
@@ -643,6 +653,233 @@ static void ambient_next(noise_gen *gen, float *left, float *right) {
   insects_next(gen, left, right);
 }
 
+typedef enum biquad_type { BIQUAD_LOWPASS, BIQUAD_HIGHPASS, BIQUAD_BANDPASS } biquad_type;
+
+/* RBJ cookbook coefficients; the band-pass has 0 dB peak gain. */
+static void biquad_tune(noise_biquad *filter, biquad_type type, float frequency, float q) {
+  float phase = 2.0f * NOISE_PI * frequency / NOISE_SAMPLE_RATE_HZ;
+  float cosine = cosf(phase);
+  float alpha = sinf(phase) / (2.0f * q);
+  float norm = 1.0f / (1.0f + alpha);
+  if (type == BIQUAD_BANDPASS) {
+    filter->b0 = alpha * norm;
+    filter->b1 = 0.0f;
+    filter->b2 = -alpha * norm;
+  } else {
+    float edge = type == BIQUAD_LOWPASS ? 1.0f - cosine : 1.0f + cosine;
+    filter->b0 = 0.5f * edge * norm;
+    filter->b1 = (type == BIQUAD_LOWPASS ? edge : -edge) * norm;
+    filter->b2 = filter->b0;
+  }
+  filter->a1 = -2.0f * cosine * norm;
+  filter->a2 = (1.0f - alpha) * norm;
+}
+
+/* Transposed direct form II tolerates slow coefficient changes. */
+static float biquad_next(noise_biquad *filter, float input) {
+  float output = filter->b0 * input + filter->state[0];
+  filter->state[0] = filter->b1 * input - filter->a1 * output + filter->state[1];
+  filter->state[1] = filter->b2 * input - filter->a2 * output;
+  return output;
+}
+
+static float clamp_unit(float value) {
+  return fminf(1.0f, fmaxf(-1.0f, value));
+}
+
+static uint32_t thunder_frames(uint32_t *rng, float seconds) {
+  return (uint32_t)(seconds * random_between(rng, 0.75f, 1.25f) * NOISE_SAMPLE_RATE_HZ);
+}
+
+static noise_result start_thunder(noise_gen *gen, position_polar position) {
+  noise_thunder_voice *voice = NULL;
+  for (unsigned i = 0; i < NOISE_THUNDER_VOICES && !voice; ++i) {
+    if (!gen->thunder[i].length) voice = &gen->thunder[i];
+  }
+  if (!voice) {
+    ++gen->state.dropped_thunder;
+    return NOISE_VOICE_LIMIT;
+  }
+  memset(voice, 0, sizeof(*voice));
+  ++gen->state.generated_thunder;
+  uint32_t *rng = &gen->thunder_rng;
+  float level = fminf(1.0f, THUNDER_REFERENCE_M / position.distance_m);
+  float pan = 0.25f * NOISE_PI * (1.0f + sinf(position.angle_rad));
+  voice->channel_gain[0] = cosf(pan);
+  voice->channel_gain[1] = sinf(pan);
+
+  voice->claps = 1u + random_u32(rng) % NOISE_THUNDER_CLAPS;
+  for (unsigned i = 0; i < voice->claps; ++i) {
+    noise_thunder_clap *clap = &voice->clap[i];
+    float r = random_unit(rng);
+    float shape = 1.4f - r;
+    float seconds = 0.24f * shape * shape * shape * shape * shape;
+    clap->start = i ? (uint32_t)(random_unit(rng) * NOISE_SAMPLE_RATE_HZ) : 0u;
+    clap->length = (uint32_t)(seconds * NOISE_SAMPLE_RATE_HZ);
+    clap->frequency_hz = 80.0f + 1200.0f * r;
+    /* The clap falls with distance squared so far strikes are mostly rumble. */
+    clap->gain = 3.0f * level * level * random_between(rng, 0.6f, 1.4f);
+    clap->impulse_probability = i % 2u ? 20.0f / (float)clap->length : 0.0f;
+    if (clap->start + clap->length > voice->clap_end) {
+      voice->clap_end = clap->start + clap->length;
+    }
+  }
+  float air_cutoff = fminf(8000.0f, fmaxf(250.0f, 2.0e6f / position.distance_m));
+  voice->clap_air_alpha = -expm1f(-2.0f * NOISE_PI * air_cutoff / NOISE_SAMPLE_RATE_HZ);
+
+  voice->rumble_gain = 4.0f * level * random_between(rng, 0.7f, 1.3f);
+  voice->rumble_length = thunder_frames(rng, 9.0f);
+  voice->rumble_cutoff_hz = 1000.0f * random_between(rng, 0.7f, 1.3f);
+  voice->rumble_phase = random_unit(rng);
+
+  voice->afterimage_gain = 0.32f * level * random_between(rng, 0.7f, 1.3f);
+  voice->afterimage_length = thunder_frames(rng, 14.0f);
+  float afterimage_center = 333.0f * random_between(rng, 0.85f, 1.15f);
+
+  voice->deepener_gain = 0.08f * level * random_between(rng, 0.7f, 1.3f);
+  voice->deepener_length = thunder_frames(rng, 18.5f);
+  for (unsigned channel = 0; channel < 2; ++channel) {
+    biquad_tune(&voice->afterimage_band[channel], BIQUAD_BANDPASS, afterimage_center, 4.0f);
+    biquad_tune(&voice->deepener_low[channel], BIQUAD_LOWPASS, 60.0f, 3.0f);
+    biquad_tune(&voice->deepener_high[channel], BIQUAD_HIGHPASS, 30.0f, 3.0f);
+    biquad_tune(&voice->deepener_out[channel], BIQUAD_LOWPASS, 80.0f, 3.0f);
+  }
+  uint32_t length = voice->clap_end;
+  if (voice->rumble_length > length) length = voice->rumble_length;
+  if (voice->afterimage_length > length) length = voice->afterimage_length;
+  if (voice->deepener_length > length) length = voice->deepener_length;
+  voice->length = length;
+  return NOISE_OK;
+}
+
+noise_result noise_trigger_thunder(noise_gen *gen, const thunder_strike *strike) {
+  if (!gen || !strike ||
+      !in_range(strike->position.distance_m, 200.0f, 15000.0f) ||
+      !in_range(strike->position.angle_rad, -2.0f * NOISE_PI, 2.0f * NOISE_PI)) {
+    return NOISE_INVALID_STRIKE;
+  }
+  return start_thunder(gen, strike->position);
+}
+
+static float thunder_voice_next(uint32_t *rng, noise_thunder_voice *voice,
+                                float diffuse[2]) {
+  uint32_t t = voice->elapsed;
+  int update = t % THUNDER_UPDATE_FRAMES == 0;
+  float clap_sum = 0.0f;
+  if (t < voice->clap_end) {
+    for (unsigned i = 0; i < voice->claps; ++i) {
+      noise_thunder_clap *clap = &voice->clap[i];
+      if (t < clap->start || t - clap->start >= clap->length) continue;
+      uint32_t position = t - clap->start;
+      float progress = (float)position / (float)clap->length;
+      if (position % THUNDER_UPDATE_FRAMES == 0) {
+        biquad_tune(&clap->band, BIQUAD_BANDPASS,
+                    clap->frequency_hz * (1.0f - 0.5f * progress), 7.0f);
+      }
+      float excitation;
+      if (clap->impulse_probability > 0.0f) {
+        /* Twenty impulses carry the same expected energy as the noise burst. */
+        excitation = random_unit(rng) < clap->impulse_probability ?
+            sqrtf((float)clap->length / 60.0f) : 0.0f;
+      } else {
+        excitation = 2.0f * random_unit(rng) - 1.0f;
+      }
+      clap_sum += clap->gain * (1.0f - progress) * biquad_next(&clap->band, excitation);
+    }
+    voice->clap_air_state += voice->clap_air_alpha * (clap_sum - voice->clap_air_state);
+    clap_sum = voice->clap_air_state;
+  }
+
+  if (t < voice->rumble_length) {
+    float progress = (float)t / (float)voice->rumble_length;
+    float ramp = 1.0f - progress;
+    if (update) {
+      /* The cutoff ramp is 4/3 as long as the gain ramp. */
+      float cutoff = fmaxf(20.0f, voice->rumble_cutoff_hz * (1.0f - 0.75f * progress));
+      voice->rumble_alpha = -expm1f(-2.0f * NOISE_PI * cutoff / NOISE_SAMPLE_RATE_HZ);
+    }
+    voice->rumble_phase += (1.0f + 2.5f * ramp) / NOISE_SAMPLE_RATE_HZ;
+    int hold = voice->rumble_phase >= 1.0f;
+    if (hold) voice->rumble_phase -= 1.0f;
+    for (unsigned channel = 0; channel < 2; ++channel) {
+      float *lowpass = voice->rumble_lowpass[channel];
+      lowpass[0] += voice->rumble_alpha * (2.0f * random_unit(rng) - 1.0f - lowpass[0]);
+      lowpass[1] += voice->rumble_alpha * (2.0f * random_unit(rng) - 1.0f - lowpass[1]);
+      if (hold) voice->rumble_hold[channel] = lowpass[1];
+      float x = fmaxf(lowpass[0], 0.0f) * voice->rumble_hold[channel];
+      /* 20 Hz DC blocker removes the rectifier's offset before the gain ramp. */
+      float y = x - voice->rumble_dc_input[channel] +
+                0.997150f * voice->rumble_dc_output[channel];
+      voice->rumble_dc_input[channel] = x;
+      voice->rumble_dc_output[channel] = y;
+      diffuse[channel] += voice->rumble_gain * ramp * y;
+    }
+  }
+
+  if (t < voice->afterimage_length) {
+    float progress = (float)t / (float)voice->afterimage_length;
+    if (update) {
+      float cutoff = fmaxf(1.0f, 33.0f * (1.0f - progress));
+      voice->afterimage_alpha = -expm1f(-2.0f * NOISE_PI * cutoff / NOISE_SAMPLE_RATE_HZ);
+    }
+    for (unsigned channel = 0; channel < 2; ++channel) {
+      voice->afterimage_lowpass[channel] += voice->afterimage_alpha *
+          (2.0f * random_unit(rng) - 1.0f - voice->afterimage_lowpass[channel]);
+      float x = clamp_unit(80.0f * voice->afterimage_lowpass[channel] *
+                           (2.0f * random_unit(rng) - 1.0f));
+      diffuse[channel] += voice->afterimage_gain * (1.0f - progress) *
+                          biquad_next(&voice->afterimage_band[channel], x);
+    }
+  }
+
+  if (t < voice->deepener_length) {
+    float ramp = 1.0f - (float)t / (float)voice->deepener_length;
+    for (unsigned channel = 0; channel < 2; ++channel) {
+      float x = biquad_next(&voice->deepener_low[channel], 2.0f * random_unit(rng) - 1.0f);
+      x = clamp_unit(3.5f * biquad_next(&voice->deepener_high[channel], x));
+      diffuse[channel] += voice->deepener_gain * ramp *
+                          biquad_next(&voice->deepener_out[channel], x);
+    }
+  }
+
+  if (++voice->elapsed == voice->length) voice->length = 0;
+  return clap_sum;
+}
+
+static void thunder_next(noise_gen *gen, float *left, float *right, float *send) {
+  const noise_config *c = &gen->config;
+  if (c->thunder_gain > 0.0f && c->thunder_rate_per_min > 0.0f) {
+    int trigger = !gen->thunder_started;
+    gen->thunder_started = 1;
+    if (!trigger) {
+      /* 32-bit comparison resolves rates far below 0.01 strikes/min. */
+      float probability = c->thunder_rate_per_min / (60.0f * NOISE_SAMPLE_RATE_HZ);
+      trigger = random_u32(&gen->thunder_rng) < (uint32_t)(probability * 4294967296.0f);
+    }
+    if (trigger) {
+      float near = c->thunder_min_distance_m;
+      float far = c->thunder_max_distance_m;
+      position_polar position;
+      position.distance_m = sqrtf(near * near + random_unit(&gen->thunder_rng) *
+                                  (far * far - near * near));
+      position.angle_rad = 2.0f * NOISE_PI * random_unit(&gen->thunder_rng);
+      /* Capacity losses are recorded by start_thunder for both paths. */
+      (void)start_thunder(gen, position);
+    }
+  }
+  for (unsigned i = 0; i < NOISE_THUNDER_VOICES; ++i) {
+    noise_thunder_voice *voice = &gen->thunder[i];
+    if (!voice->length) continue;
+    float gain[2] = {c->thunder_gain * voice->channel_gain[0],
+                     c->thunder_gain * voice->channel_gain[1]};
+    float diffuse[2] = {0.0f, 0.0f};
+    float clap = thunder_voice_next(&gen->thunder_rng, voice, diffuse);
+    *send += c->thunder_gain * clap;
+    *left += gain[0] * (clap + diffuse[0]);
+    *right += gain[1] * (clap + diffuse[1]);
+  }
+}
+
 static void reverb_next(noise_gen *gen, float send, float gain,
                         float *left, float *right) {
   float delay[NOISE_REVERB_LINES];
@@ -745,6 +982,7 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
     gen->direct[0][gen->direct_position] = 0.0f;
     gen->direct[1][gen->direct_position] = 0.0f;
     if (++gen->direct_position == NOISE_DIRECT_SAMPLES) gen->direct_position = 0;
+    thunder_next(gen, &left, &right, &send);
     if (gen->config.reverb_gain > 0.0f ||
         gen->config.weather_mod_amount[WEATHER_MOD_REVERB_GAIN] != 0.0f) {
       reverb_next(gen, send, reverb_gain, &left, &right);

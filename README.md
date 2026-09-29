@@ -9,10 +9,12 @@ renderer and an Arduino sketch for eventual ESP32 audio output.
   resonance and optional Markov intensity changes.
 - Place drops around the listener with per-ear attenuation, fractional delay,
   a tunable spherical-head HRTF, rear filtering, and shared stereo reverb.
+- Trigger thunder strikes by hand or at a random rate, each with a clap,
+  rumble, afterimage, and low-frequency deepener shaped by distance.
 
 The [model documentation](docs/index.md) gives the equations, units,
 assumptions, material presets, API contract, and cited references.
-Thunder and frogs are deferred.
+Frogs are deferred.
 
 ## Build and listen
 
@@ -41,6 +43,9 @@ signed 16-bit PCM.
 # Mono direct rain with no reverb.
 ./host/noise_host -k rain -b 0 -e 0 -d 20 out/mono-rain.wav
 
+# Rain with thunder at six strikes per minute.
+./host/noise_host -k rain -k thunder -t 6 -v -d 60 out/thunder-rain.wav
+
 # Pink noise, or substitute white, hum50, or hum60.
 ./host/noise_host -k pink -d 10 out/pink.wav
 ```
@@ -57,8 +62,10 @@ make -C host gui
 ./host/noise_gui
 ```
 
-Press **Start** for continuous playback. The Mixer, Wind, Insects, Rain,
-Water, Weather Mod, and Spatial tabs expose every field in `noise_config`.
+Press **Start** for continuous playback. The Mixer, Wind, Insects, Thunder,
+Rain, Water, Weather Mod, and Spatial tabs expose every field in `noise_config`.
+**Strike** on the Thunder tab starts one strike at a random position within
+the distance range.
 Wind has gain, brightness, gust depth, gust rate, and stereo width controls.
 Crickets and cicadas have separate activity, pitch, texture, and stereo controls. Water controls randomized
 impact gain, bubble probability, radius, gain, and decay ranges. Weather Mod
@@ -73,8 +80,9 @@ resetting the generator clears all current audio state.
 
 Run `./host/noise_host -h` for usage.
 
-- `-k white|pink|hum50|hum60|wind|crickets|cicadas|rain`: select a layer; repeat to mix. Each
-  ambient layer has gain 0.3. With no layer or rain option, default to pink.
+- `-k white|pink|hum50|hum60|wind|crickets|cicadas|rain|thunder`: select a layer; repeat
+  to mix. Each ambient layer has gain 0.3; thunder has gain 0.5. With no layer or
+  rain option, default to pink.
 - `-r NUMBER`: fixed rain intensity from 0 to 1. Enables rain even without
   `-k rain`. Default rain intensity is 0.5.
 - `-v`: enable Markov rain variation, initially at the bounds' midpoint
@@ -86,6 +94,8 @@ Run `./host/noise_host -h` for usage.
   15% concrete, and 0.5% each glass and metal. Plastic, asphalt, and roof
   weights default to zero.
 - `-n NUMBER`: arrival rate at intensity one, from 0 to 2000/s. Default: 900.
+- `-t NUMBER`: thunder strikes per minute, from 0 to 20. Default: 2. The first
+  strike starts at time zero.
 - `-b METRES`: ear spacing and head diameter, from 0 to 0.5. Default: 0.18.
 - `-a NUMBER`: head effect from 0 to 1. Default: 1. Zero retains geometric
   mic delay and attenuation while disabling shadowing and diffraction.
@@ -97,7 +107,7 @@ Run `./host/noise_host -h` for usage.
 - `-d SECONDS`: duration. Default: 10.
 
 The renderer reports CPU time, engine memory, peak voices, rejected drops,
-and clipped channel samples. Reduce rate if the voice pool fills, or reduce
+thunder strikes and rejections, and clipped channel samples. Reduce rate if the voice pool fills, or reduce
 gain if clipping occurs. File output ends at the requested duration; it does
 not append a reverb tail or fade. The same seed and settings reproduce output
 within the same build, regardless of audio buffer size.
@@ -124,10 +134,11 @@ noise_fill(&generator, frames, 256);
 Configuration also exposes individual layer gains, material weights, source
 distance bounds, falling height, weather interval, and smoothing time.
 `noise_trigger_drop` accepts an individual drop with radius, speed, material,
-bubble radius, and polar position. See [the API and limits](docs/index.md#api-and-limits).
+bubble radius, and polar position. `noise_trigger_thunder` accepts a strike
+distance and angle. See [the API and limits](docs/index.md#api-and-limits).
 
 The engine owns no heap memory and renders into caller-owned buffers. It
-currently occupies about 52 KB plus output buffers. Keep it in static storage.
+currently occupies about 57 KB plus output buffers. Keep it in static storage.
 Configuration changes require reinitialization; control and render calls must
 share one thread. The API counts stereo frames, so allocate two samples per
 frame.

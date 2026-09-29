@@ -110,6 +110,7 @@ static void test_silence_and_chunks(void) {
   c.ambient_gain[NOISE_KIND_WIND] = 0.1f;
   c.ambient_gain[NOISE_KIND_CRICKETS] = 0.05f;
   c.ambient_gain[NOISE_KIND_CICADAS] = 0.05f;
+  c.thunder_gain = 0.3f;
   assert(noise_init(&a, &c, 0) == NOISE_OK);
   assert(noise_init(&b, &c, 1) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
@@ -124,6 +125,7 @@ static void test_silence_and_chunks(void) {
   }
   assert(memcmp(&a, &b, sizeof(a)) == 0);
   assert(a.state.generated_drops > 100);
+  assert(a.state.generated_thunder == 1);
   assert(a.state.dropped_drops == 0);
   assert(a.state.clipped_samples == 0);
   assert(noise_init(&b, &c, 2) == NOISE_OK);
@@ -279,6 +281,91 @@ static void test_insects(void) {
   }
   assert(cicada_stereo > NOISE_SAMPLE_RATE_HZ / 2);
   assert(a.state.clipped_samples == 0);
+}
+
+static void test_thunder(void) {
+  noise_config c = silent_config();
+  c.thunder_gain = 1.01f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.thunder_rate_per_min = 21.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.thunder_min_distance_m = 199.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.thunder_max_distance_m = 900.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+
+  c = silent_config();
+  c.thunder_gain = 1.0f;
+  c.thunder_rate_per_min = 0.0f;
+  assert(noise_init(&a, &c, 61) == NOISE_OK);
+  b = a;
+  thunder_strike strike = {{100.0f, 0.0f}};
+  assert(noise_trigger_thunder(&a, &strike) == NOISE_INVALID_STRIKE);
+  strike.position.distance_m = NAN;
+  assert(noise_trigger_thunder(&a, &strike) == NOISE_INVALID_STRIKE);
+  assert(memcmp(&a, &b, sizeof(a)) == 0);
+
+  /* A strike retires within its longest jittered ramp and leaves exact silence. */
+  strike.position.distance_m = 1000.0f;
+  assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
+  assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
+  assert(noise_trigger_thunder(&a, &strike) == NOISE_VOICE_LIMIT);
+  assert(a.state.generated_thunder == 2 && a.state.dropped_thunder == 1);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  double low = band_power(60), high = band_power(3200);
+  assert(low > 100.0 * high);
+  for (unsigned second = 1; second < 24; ++second) noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  assert(a.thunder[0].length == 0 && a.thunder[1].length == 0);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  for (unsigned i = 0; i < 2 * NOISE_SAMPLE_RATE_HZ; ++i) assert(audio[i] == 0);
+  assert(a.state.clipped_samples == 0);
+
+  /* Distance does not change the random draws, so only its filters and gains differ. */
+  double clap_ratio[2];
+  const float distances[2] = {1000.0f, 8000.0f};
+  for (unsigned d = 0; d < 2; ++d) {
+    assert(noise_init(&a, &c, 62) == NOISE_OK);
+    strike.position.distance_m = distances[d];
+    assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
+    noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+    clap_ratio[d] = band_power(800) / band_power(60);
+  }
+  assert(clap_ratio[1] < 0.5 * clap_ratio[0]);
+
+  /* Hard left and hard right swap channels exactly. */
+  strike.position.distance_m = 2000.0f;
+  strike.position.angle_rad = (float)(-TEST_PI / 2.0);
+  assert(noise_init(&a, &c, 63) == NOISE_OK);
+  assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  unsigned right_nonzero = 0;
+  for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) right_nonzero += audio[2 * n + 1] != 0;
+  assert(right_nonzero == 0);
+
+  /* Automatic strikes: one at start, then about rate/min, including capacity losses. */
+  c.thunder_rate_per_min = 20.0f;
+  assert(noise_init(&a, &c, 64) == NOISE_OK);
+  for (unsigned second = 0; second < 120; ++second) noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  uint64_t strikes = a.state.generated_thunder + a.state.dropped_thunder;
+  assert(strikes > 25 && strikes < 57);
+  assert(a.state.dropped_thunder > 0);
+
+  /* Thunder draws from its own stream, so rain is unchanged by it. */
+  c = silent_config();
+  c.rain_intensity = 0.8f;
+  c.reverb_gain = 0.2f;
+  assert(noise_init(&a, &c, 65) == NOISE_OK);
+  c.thunder_gain = 1.0f;
+  c.thunder_rate_per_min = 20.0f;
+  assert(noise_init(&b, &c, 65) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  noise_fill(&b, audio, NOISE_SAMPLE_RATE_HZ);
+  assert(b.state.generated_thunder >= 1);
+  assert(a.state.generated_drops == b.state.generated_drops);
+  assert(a.drop_rng == b.drop_rng && a.arrival_rng == b.arrival_rng);
 }
 
 static void test_bubble_physics(void) {
@@ -773,6 +860,7 @@ int main(void) {
   test_noise_spectra();
   test_wind();
   test_insects();
+  test_thunder();
   test_bubble_physics();
   test_water_controls();
   test_automatic_water_bubbles();

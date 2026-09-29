@@ -9,7 +9,8 @@ of calibrated acoustic pressure or a full fluid simulation.
 
 Each rain arrival creates up to three damped modes: an impact and either a
 water bubble or two material modes. Their sum feeds the direct stereo path
-and a shared reverb. Ambient layers join the stereo mix after the reverb.
+and a shared reverb. Thunder joins the direct mix and sends its clap to the
+same reverb. Ambient layers join the stereo mix after the reverb.
 `rain_gain` scales both direct rain and the reverb send. `master_gain` scales
 the final output before conversion to PCM.
 
@@ -362,6 +363,67 @@ propagation solver or a room model. There are no reflecting walls,
 material absorption measurements, or air-absorption model. With reverb
 gain zero, the network is bypassed.
 
+## Thunder
+
+Thunder is a triggered event, not a continuous layer. The model follows the
+four signal-based components of Fineberg, Walters, and Reiss [7, sections 3.1
+to 3.4], including their post-survey revisions [7, section 6.1]. Every
+component starts from uniform white noise and ends with a linear ramp to zero.
+
+- Clap: 1 to 5 strikes. The first starts at once; the others start uniformly
+  within the first second. Each strike samples r uniform in [0, 1). Its
+  band-pass centre is 80 + 1200r Hz with Q 7, and the centre falls linearly
+  to half over the strike. Its length is 240(1.4 - r)^5 ms, from 2.45 ms to
+  1.29 s. Even strikes filter a noise burst. Odd strikes filter about 20
+  impulses at random frames; each impulse has amplitude sqrt(length/60), so
+  both kinds carry the same expected energy.
+- Rumbler: two low-passed noise streams. The first is half-wave rectified.
+  A sample-and-hold captures the second at 1 + 2.5g Hz, where g falls from
+  1 to 0 with the gain ramp. The engine multiplies the two; the paper does not
+  say how they combine. A 20 Hz DC blocker removes the rectifier's offset. The
+  gain ramp lasts 9 s. The cutoff starts near 1 kHz and falls over 12 s, so it
+  ends at a quarter of its start value when the gain reaches zero.
+- Afterimage: noise low-passed at 33 Hz, falling to 1 Hz, times 80, times a
+  second noise, clipped to [-1, 1], then band-passed at 333 Hz with Q 4. The
+  gain ramp lasts 14 s.
+- Deepener: low-pass 60 Hz, then high-pass 30 Hz, both Q 3; times 3.5,
+  clipped to [-1, 1], then low-pass 80 Hz with Q 3. The gain ramp lasts 18.5 s.
+
+The biquads use the RBJ cookbook forms. Time-varying cutoffs recompute every
+32 frames to keep trigonometry out of the per-sample path.
+
+The paper's listeners found deterministic envelopes and regular timing less
+realistic [7, section 5.2]. Each strike therefore samples its strike count,
+timings, and clap gains. It also scales each component's ramp length by
+0.75 to 1.25, its gain by 0.7 to 1.3, the rumble cutoff by 0.7 to 1.3, and
+the afterimage centre by 0.85 to 1.15. Component mix weights are sound design levels; the paper gives
+no absolute gains for this filter chain. At 1 km and thunder gain one, the
+worst peak over 20 seeds is about 0.68 of full scale.
+
+Distance d, from 200 m to 15 km, sets a level `min(1, 1000/d)`. The rumbler,
+afterimage, and deepener use that level; the clap uses its square, so a strike
+8 km away is almost all rumble. A one-pole low-pass on the clap stands in for
+air absorption, with cutoff `2×10^6/d` Hz limited to 250 to 8000 Hz. The
+paper's distance delay adds silence before an event with no visual flash, so
+the engine does not use it.
+
+A constant-power pan places each strike by azimuth: the pan angle is
+`π/4 × (1 + sin φ)`. The clap is mono before the pan. The rumbler,
+afterimage, and deepener draw independent noise for each channel, which makes
+them wide. Drops keep the spherical-head model; at kilometre distances its
+cues reduce to level and delay a pan already supplies. The clap alone sends
+to the shared reverb, scaled by thunder gain.
+
+Automatic strikes start one at time zero, then use a Bernoulli trial per
+frame at `thunder_rate_per_min / 60` per second. The comparison uses 32 bits,
+so slow rates keep their resolution. Positions are uniform by area between
+the distance bounds, with uniform azimuth. Two voices can overlap. A strike
+that finds both busy is rejected and counted in `state.dropped_thunder`.
+
+The paper's 0.6 s feedback delay, beach convolution reverb, and output
+compressor are not implemented. The delay line alone would need about 105 KB
+of floats. The shared reverb and master gain cover their roles.
+
 ## Weather controller
 
 Optional intensity variation uses a three-state Markov chain. At each
@@ -427,6 +489,11 @@ valid storage. Configuration is immutable after initialization; do not
 mutate engine fields. The public `state` is for inspection by the owning
 thread.
 
+`noise_trigger_thunder` accepts a strike distance from 200 m to 15 km and an
+angle from negative 2π to positive 2π. Invalid strikes return
+`NOISE_INVALID_STRIKE` and leave the engine unchanged. A strike with both
+voices busy returns `NOISE_VOICE_LIMIT`.
+
 `noise_trigger_drop` accepts a physical drop at the listener's arrival
 time. It validates radius (0.4 to 2.9 mm), velocity (0 to 12 m/s), distance
 (0.25 to 100 m), angle (negative 2π to positive 2π), and bubble constraints.
@@ -443,6 +510,8 @@ Configuration ranges are:
   stereo width: 0 to 1.
 - Cicada pitch: 2 to 10 kHz. Pulse rate: 10 to 120 Hz. Texture and stereo
   width: 0 to 1.
+- Thunder gain: 0 to 1, default 0. Strike rate: 0 to 20 per minute, default 2.
+  Distance bounds: 200 m to 15 km, ordered; defaults 1 and 8 km.
 - Initial, minimum, and maximum rain intensity: 0 to 1; minimum must not
   exceed maximum. Initial intensity must lie within bounds when varying.
 - `vary_rain`: 0 or 1.
@@ -458,9 +527,9 @@ Configuration ranges are:
   ordered.
 - Weather modulation amounts: -1 to 1 each.
 
-Seven separate random streams drive ambient samples, wind, crickets, cicadas,
-arrivals, drop properties, and weather. Enabling ambient sound cannot change the rain
-sequence. Seed zero aliases seed one. Results repeat for the same build,
+Eight separate random streams drive ambient samples, wind, crickets, cicadas,
+thunder, arrivals, drop properties, and weather. Enabling ambient sound or
+thunder cannot change the rain sequence. Seed zero aliases seed one. Results repeat for the same build,
 configuration, and seed, independent of fill size. Floating-point and
 libm differences can prevent bit-identical output across CPU/toolchain
 combinations. The generator is for sound, not cryptography.
@@ -474,7 +543,7 @@ and peak voice count.
 ## ESP32 and validation
 
 The sample rate, channel count, and pool size are compile-time constants.
-The engine occupies 57,072 bytes with the tested host ABI, plus 1,024
+The engine occupies 58,280 bytes with the tested host ABI, plus 1,024
 bytes for a 256-frame PCM buffer. Confirm `sizeof(noise_gen)` on the
 target ABI. Keep the generator in static storage, not a small task stack. Buffers are
 caller-owned. Trigonometry, exponentials, and square roots for drops run
@@ -498,17 +567,11 @@ independence, malformed CLI values, WAV headers, all nine surfaces, and
 linking the sketch against the C engine. Spatial checks cover rendered
 phase, ear symmetry, head shelf gain, width bypass, distance gain,
 reverb-send independence, rear filtering, and maximum delay bounds.
+Thunder checks cover validation, voice limits, retirement to exact silence,
+low-frequency dominance, distance filtering, panning, automatic rate, and
+rain-stream independence.
 A host stub checks linkage only;
 it does not emulate ESP32 peripherals or prove the Arduino SDK build.
-
-## Deferred thunder model
-
-Thunder is not implemented. A later implementation will treat it as a
-triggered event instead of a continuous ambient layer. Fineberg, Walters, and
-Reiss [7] divide a real-time signal-based model into a multi-strike clap,
-rumbler, afterimage, and low-frequency deepener. Their evaluation also found
-that deterministic envelopes and excessive regularity reduced perceived
-realism, so each component will need independent timing and spectral variation.
 
 ## References
 
@@ -554,4 +617,6 @@ an unpublished source.
    Synthesis*. Audio Engineering Society, 2022.
    [arXiv:2204.08026](https://arxiv.org/abs/2204.08026).
    Sections 3.1 to 3.4 describe the multi-strike, rumbler, afterimage, and
-   deepener components. Thunder is not yet implemented.
+   deepener components. Section 6.1 supplies the revised clap Q, clap centre,
+   and deepener high-pass. Its delay, convolution reverb, compressor, and
+   Web Audio panner are not used.

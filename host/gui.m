@@ -30,6 +30,10 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlCicadaPulseRate,
   NoiseControlCicadaTexture,
   NoiseControlCicadaWidth,
+  NoiseControlThunderGain,
+  NoiseControlThunderRate,
+  NoiseControlThunderMinDistance,
+  NoiseControlThunderMaxDistance,
   NoiseControlRainGain,
   NoiseControlMaster,
   NoiseControlRainIntensity,
@@ -82,6 +86,49 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlCount
 };
 
+/* Listening settings the GUI opens with; the engine keeps its own defaults. */
+static void apply_startup_settings(noise_config *c) {
+  memset(c->ambient_gain, 0, sizeof(c->ambient_gain));
+  c->ambient_gain[NOISE_KIND_WIND] = 0.10f;
+  c->ambient_gain[NOISE_KIND_CRICKETS] = 0.09f;
+  c->rain_gain = 0.91f;
+  c->master_gain = 0.80f;
+  c->wind_brightness = 0.22f;
+  c->wind_gust_depth = 0.94f;
+  c->wind_gust_rate_hz = 0.19f;
+  c->wind_stereo_width = 0.78f;
+  c->cricket_call_rate_hz = 0.51f;
+  c->cricket_pitch_hz = 4500.0f;
+  c->cricket_pitch_variation = 0.24f;
+  c->cricket_stereo_width = 1.00f;
+  c->vary_rain = 1;
+  c->rain_intensity = 0.84f;
+  c->min_rain_intensity = 0.15f;
+  c->max_rain_intensity = 1.00f;
+  c->weather_step_s = 8.0f;
+  c->rain_slew_s = 2.0f;
+  c->max_drops_per_s = 2000.0f;
+  c->fall_height_m = 1000.0f;
+  c->surface_weight[WATER] = 6.05624e-05f;
+  c->surface_weight[DIRT] = 4.94011e-05f;
+  c->surface_weight[LEAF] = 3.04537e-06f;
+  c->surface_weight[CONCRETE] = 1.68416e-05f;
+  c->surface_weight[GLASS] = 2.29582e-07f;
+  c->surface_weight[METAL] = 2.68089e-07f;
+  c->surface_weight[PLASTIC] = 3.93724e-06f;
+  c->surface_weight[ASPHALT] = 0.002557f;
+  c->surface_weight[ASPHALT_ROOF] = 0.001559f;
+  c->water_impact_gain_min = 0.16f;
+  c->water_impact_gain_max = 0.50f;
+  c->water_bubble_probability = 0.51f;
+  c->water_bubble_radius_min_m = 0.00023f;
+  c->water_bubble_radius_max_m = 0.00069f;
+  c->water_bubble_gain_min = 0.36f;
+  c->water_bubble_gain_max = 2.50f;
+  c->water_bubble_decay_min = 0.31f;
+  c->water_bubble_decay_max = 0.58f;
+}
+
 @interface NoiseAppDelegate : NSObject <NSApplicationDelegate, NSTextFieldDelegate>
 @end
 
@@ -100,6 +147,9 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   noise_gen _generator;
   _Atomic(float) _controls[NoiseControlCount];
   _Atomic(int) _varyRain;
+  _Atomic(float) _strikeDistance;
+  _Atomic(float) _strikeAngle;
+  _Atomic(int) _strikeRequested;
   float _appliedRainControl;
   int _appliedVary;
   BOOL _playing;
@@ -141,6 +191,10 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   config.cicada_pulse_rate_hz = [self controlValue:NoiseControlCicadaPulseRate];
   config.cicada_texture = [self controlValue:NoiseControlCicadaTexture];
   config.cicada_stereo_width = [self controlValue:NoiseControlCicadaWidth];
+  config.thunder_gain = [self controlValue:NoiseControlThunderGain];
+  config.thunder_rate_per_min = [self controlValue:NoiseControlThunderRate];
+  config.thunder_min_distance_m = [self controlValue:NoiseControlThunderMinDistance];
+  config.thunder_max_distance_m = [self controlValue:NoiseControlThunderMaxDistance];
   config.rain_gain = [self controlValue:NoiseControlRainGain];
   config.master_gain = [self controlValue:NoiseControlMaster];
   config.rain_intensity = [self controlValue:NoiseControlRainIntensity];
@@ -244,6 +298,12 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
     return noErr;
   }
   [self loadControlsIntoGenerator];
+  if (atomic_exchange_explicit(&_strikeRequested, 0, memory_order_acquire)) {
+    thunder_strike strike = {{
+        atomic_load_explicit(&_strikeDistance, memory_order_relaxed),
+        atomic_load_explicit(&_strikeAngle, memory_order_relaxed)}};
+    noise_trigger_thunder(&_generator, &strike);
+  }
   noise_fill(&_generator, buffers->mBuffers[0].mData, frames);
   buffers->mBuffers[0].mDataByteSize = (UInt32)bytes;
   return noErr;
@@ -289,6 +349,9 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   if (control >= NoiseControlWaterWeight && control <= NoiseControlAsphaltRoofWeight) {
     return [NSString stringWithFormat:@"%.6g", value];
   }
+  if (control == NoiseControlThunderMinDistance || control == NoiseControlThunderMaxDistance) {
+    return [NSString stringWithFormat:@"%.0f", value];
+  }
   if (control == NoiseControlStereoWidth || control == NoiseControlMinDistance ||
       control == NoiseControlMaxDistance) {
     return [NSString stringWithFormat:@"%.3f", value];
@@ -333,6 +396,12 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   } else if (control == NoiseControlMaxDistance &&
              value < [self controlValue:NoiseControlMinDistance]) {
     [self storeControl:NoiseControlMinDistance value:value];
+  } else if (control == NoiseControlThunderMinDistance &&
+             value > [self controlValue:NoiseControlThunderMaxDistance]) {
+    [self storeControl:NoiseControlThunderMaxDistance value:value];
+  } else if (control == NoiseControlThunderMaxDistance &&
+             value < [self controlValue:NoiseControlThunderMinDistance]) {
+    [self storeControl:NoiseControlThunderMinDistance value:value];
   } else if (control == NoiseControlWaterImpactMin &&
              value > [self controlValue:NoiseControlWaterImpactMax]) {
     [self storeControl:NoiseControlWaterImpactMax value:value];
@@ -408,7 +477,8 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   field.delegate = self;
   field.tag = control;
   field.stringValue = [self formattedValue:value control:control];
-  [field.widthAnchor constraintEqualToConstant:72.0].active = YES;
+  /* %.6g weights such as 6.05624e-05 need 11 characters. */
+  [field.widthAnchor constraintEqualToConstant:surfaceWeight ? 100.0 : 72.0].active = YES;
   _valueFields[control] = field;
 
   NSStackView *row = [NSStackView stackViewWithViews:@[label, slider, field]];
@@ -457,6 +527,21 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                 fmax([self controlValue:NoiseControlMinRain], rain));
     [self storeControl:NoiseControlRainIntensity value:rain];
   }
+}
+
+- (void)strikeThunder:(NSButton *)sender {
+  (void)sender;
+  double near = [self controlValue:NoiseControlThunderMinDistance];
+  double far = [self controlValue:NoiseControlThunderMaxDistance];
+  double u = arc4random() / 4294967296.0;
+  double distance = sqrt(near * near + u * (far * far - near * near));
+  double angle = 2.0 * M_PI * (arc4random() / 4294967296.0);
+  atomic_store_explicit(&_strikeDistance, (float)distance, memory_order_relaxed);
+  atomic_store_explicit(&_strikeAngle, (float)angle, memory_order_relaxed);
+  atomic_store_explicit(&_strikeRequested, 1, memory_order_release);
+  _statusLabel.stringValue = _playing ?
+      [NSString stringWithFormat:@"Strike at %.0f m", distance] :
+      @"Strike queued until playback starts";
 }
 
 - (void)resetGenerator:(NSButton *)sender {
@@ -535,12 +620,15 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   (void)notification;
   noise_config defaults;
   noise_config_default(&defaults);
-  defaults.rain_intensity = 0.5f;
+  apply_startup_settings(&defaults);
   if (noise_init(&_generator, &defaults, 1) != NOISE_OK) {
     [NSApp terminate:nil];
     return;
   }
   atomic_init(&_varyRain, defaults.vary_rain);
+  atomic_init(&_strikeDistance, defaults.thunder_min_distance_m);
+  atomic_init(&_strikeAngle, 0.0f);
+  atomic_init(&_strikeRequested, 0);
   _appliedRainControl = defaults.rain_intensity;
   _appliedVary = defaults.vary_rain;
 
@@ -614,6 +702,23 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                  value:defaults.cicada_texture minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Stereo width" control:NoiseControlCicadaWidth
                  value:defaults.cicada_stereo_width minimum:0 maximum:1 logarithmic:NO]
+  ]];
+
+  NSButton *strikeButton = [NSButton buttonWithTitle:@"Strike"
+                                              target:self action:@selector(strikeThunder:)];
+  NSView *thunder = [self tabViewWithRows:@[
+      [self sectionLabel:@"Thunder"],
+      [self sliderRow:@"Gain" control:NoiseControlThunderGain
+                 value:defaults.thunder_gain minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Strikes per minute" control:NoiseControlThunderRate
+                 value:defaults.thunder_rate_per_min minimum:0 maximum:20 logarithmic:NO],
+      [self sliderRow:@"Minimum distance (m)" control:NoiseControlThunderMinDistance
+                 value:defaults.thunder_min_distance_m
+               minimum:200 maximum:15000 logarithmic:YES],
+      [self sliderRow:@"Maximum distance (m)" control:NoiseControlThunderMaxDistance
+                 value:defaults.thunder_max_distance_m
+               minimum:200 maximum:15000 logarithmic:YES],
+      strikeButton
   ]];
 
   _varyButton = [NSButton checkboxWithTitle:@"Vary rain automatically"
@@ -766,7 +871,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 
   NSTabView *tabs = [[NSTabView alloc] initWithFrame:NSZeroRect];
   for (NSArray *item in @[@[@"Mixer", mixer], @[@"Wind", wind], @[@"Insects", insects],
-                           @[@"Rain", rain], @[@"Water", water],
+                           @[@"Thunder", thunder], @[@"Rain", rain], @[@"Water", water],
                            @[@"Weather Mod", weatherMod], @[@"Spatial", spatial]]) {
     NSTabViewItem *tab = [[NSTabViewItem alloc] initWithIdentifier:item[0]];
     tab.label = item[0];

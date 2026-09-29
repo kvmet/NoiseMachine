@@ -29,7 +29,7 @@ def main():
             "-lm", "-o", str(host))
         destination = work / "audio.wav"
         for kind in ("white", "pink", "hum50", "hum60", "wind", "crickets", "cicadas",
-                     "rain"):
+                     "rain", "thunder"):
             run(str(host), "-k", kind, "-d", "0.125", str(destination), stdout=subprocess.DEVNULL)
             with wave.open(str(destination)) as wav:
                 assert wav.getnchannels() == 2
@@ -54,7 +54,8 @@ def main():
                      ("-s", "4294967296"), ("-s", "1x"), ("-r", "nan"), ("-r", "1.1"),
                      ("-k", "bad"), ("-m", "bad"), ("-v", "-l", "0.9", "-u", "0.2"),
                      ("-v", "-r", "0"), ("-z", "1"), ("-g", "1e30"), ("-n", "2001"),
-                     ("-b", "0.51"), ("-a", "-0.1"), ("-f", "nan")):
+                     ("-b", "0.51"), ("-a", "-0.1"), ("-f", "nan"), ("-t", "21"),
+                     ("-t", "-1")):
             destination.write_bytes(b"preserve existing file")
             result = subprocess.run((str(host), *args, str(destination)), capture_output=True)
             assert result.returncode != 0, args

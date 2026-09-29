@@ -41,13 +41,14 @@ static int write_wav_header(FILE *file, uint32_t frames) {
 static void print_usage(const char *program) {
   fprintf(stderr,
       "usage: %s [options] OUTPUT.wav\n"
-      "  -k white|pink|hum50|hum60|wind|crickets|cicadas|rain   repeat to mix layers\n"
+      "  -k white|pink|hum50|hum60|wind|crickets|cicadas|rain|thunder   repeat to mix\n"
       "  -r intensity   fixed rain intensity, 0..1\n"
       "  -v             vary rain with the Markov controller\n"
       "  -l minimum     minimum varying intensity, 0..1\n"
       "  -u maximum     maximum varying intensity, 0..1\n"
       "  -m mixed|water|dirt|leaf|concrete|glass|metal|plastic|asphalt|asphalt-roof\n"
       "  -n rate        arrivals/second at full intensity, 0..2000\n"
+      "  -t rate        thunder strikes/minute, 0..20; default 2\n"
       "  -b metres      ear spacing / head diameter, 0..0.5; default 0.18\n"
       "  -a amount      head model strength, 0..1; 0 bypasses it\n"
       "  -f amount      rear filter strength, 0..1; 0 bypasses it\n"
@@ -103,6 +104,8 @@ int main(int argc, char **argv) {
       explicit_layer = 1;
       if (strcmp(value, "rain") == 0) {
         rain = 1;
+      } else if (strcmp(value, "thunder") == 0) {
+        config.thunder_gain = 0.5f;
       } else {
         static const char *names[] = {
           "white", "pink", "hum50", "hum60", "wind", "crickets", "cicadas"
@@ -154,7 +157,7 @@ int main(int argc, char **argv) {
         continue;
       }
       double maximum = strcmp(arg, "-n") == 0 ? 2000.0 :
-          (strcmp(arg, "-b") == 0 ? 0.5 : 1.0);
+          (strcmp(arg, "-b") == 0 ? 0.5 : (strcmp(arg, "-t") == 0 ? 20.0 : 1.0));
       if (number < 0.0 || number > maximum) {
         fprintf(stderr, "value for %s outside 0..%g\n", arg, maximum);
         return 1;
@@ -169,6 +172,8 @@ int main(int argc, char **argv) {
         config.max_rain_intensity = (float)number;
       } else if (strcmp(arg, "-n") == 0) {
         config.max_drops_per_s = (float)number;
+      } else if (strcmp(arg, "-t") == 0) {
+        config.thunder_rate_per_min = (float)number;
       } else if (strcmp(arg, "-e") == 0) {
         config.reverb_gain = (float)number;
       } else if (strcmp(arg, "-b") == 0) {
@@ -242,9 +247,10 @@ int main(int argc, char **argv) {
   double elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
   printf("%s: %u stereo frames, seed %" PRIu32 ", %.3f CPU seconds\n"
          "engine: %zu bytes; peak voices: %u/%u; drops: %" PRIu64
-         "; capacity losses: %" PRIu64 "; clipped samples: %" PRIu64 "\n",
+         "; capacity losses: %" PRIu64 "; thunder strikes: %" PRIu64
+         "; thunder losses: %" PRIu64 "; clipped samples: %" PRIu64 "\n",
          out_path, frames, seed, elapsed, sizeof(gen), gen.state.peak_active_drops,
          NOISE_MAX_DROPLETS, gen.state.generated_drops, gen.state.dropped_drops,
-         gen.state.clipped_samples);
+         gen.state.generated_thunder, gen.state.dropped_thunder, gen.state.clipped_samples);
   return 0;
 }
