@@ -97,7 +97,9 @@ typedef struct noise_config {
   float cricket_call_rate_hz;
   float cricket_pitch_hz;
   float cricket_pitch_variation;
-  float cricket_stereo_width;
+  float cricket_stereo_width; /* Angular spread: 0 all in front, 1 all around. */
+  float cricket_min_distance_m;
+  float cricket_max_distance_m;
   float cicada_pitch_hz;
   float cicada_pulse_rate_hz;
   float cicada_texture;
@@ -124,7 +126,7 @@ typedef struct noise_config {
   float stereo_width_m; /* Ear spacing; sphere radius is half this width. */
   float head_amount; /* 0: spaced microphones, 1: spherical head. */
   float rear_amount; /* 0: bypass rear filter, 1: full rear filter. */
-  float reverb_gain; /* Rain send is before distance attenuation. */
+  float reverb_gain; /* Rain and cricket sends are before distance attenuation. */
   float water_impact_gain_min;
   float water_impact_gain_max;
   float water_bubble_probability;
@@ -152,13 +154,36 @@ typedef struct noise_oscillator {
   float coefficient;
 } noise_oscillator;
 
+/* Distance, ear delay, head shadow, and rear filter for one point source. */
+typedef struct noise_spatial {
+  float ear_gain[2];
+  unsigned ear_delay[2];
+  float delay_weight[2][4];
+  float head_b0[2];
+  float head_b1[2];
+  float head_feedback;
+  float head_state[2];
+  float head_previous_input;
+  float lowpass_alpha;
+  float lowpass_state;
+} noise_spatial;
+
+/* One persistent cricket; its offsets scale with the live config at each chirp. */
 typedef struct noise_cricket_voice {
   noise_oscillator oscillator;
-  float channel_gain[2];
-  uint32_t remaining;
-  uint32_t total_samples;
+  noise_spatial spatial;
+  float glide; /* Oscillator coefficient step per frame within a pulse. */
+  float pitch_offset; /* -1..1 */
+  float angle_offset; /* -1..1, times pi times stereo width. */
+  float distance_offset; /* 0..1, area-uniform between the distance bounds. */
+  float period_scale; /* Chirp period relative to 1 / call rate. */
+  unsigned pulses; /* Per chirp. */
+  unsigned singing;
   uint32_t pulse_samples;
   uint32_t sounding_samples;
+  uint32_t chirp_samples; /* Frames since the chirp started. */
+  uint32_t until_chirp;
+  uint32_t bout_samples; /* Frames left in the singing or silent bout. */
 } noise_cricket_voice;
 
 typedef struct noise_thunder_segment {
@@ -186,18 +211,9 @@ typedef struct noise_thunder_voice {
 
 typedef struct noise_drop_voice {
   noise_mode mode[3];
-  float ear_gain[2];
-  unsigned ear_delay[2];
-  float delay_weight[2][4];
-  float head_b0[2];
-  float head_b1[2];
-  float head_feedback;
-  float head_state[2];
-  float head_previous_input;
+  noise_spatial spatial;
   float material_lowpass_alpha;
   float material_lowpass_state[2];
-  float lowpass_alpha;
-  float lowpass_state;
   unsigned filter_tail;
 } noise_drop_voice;
 

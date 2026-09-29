@@ -25,6 +25,8 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlCricketPitch,
   NoiseControlCricketPitchVariation,
   NoiseControlCricketWidth,
+  NoiseControlCricketMinDistance,
+  NoiseControlCricketMaxDistance,
   NoiseControlCicadaGain,
   NoiseControlCicadaPitch,
   NoiseControlCicadaPulseRate,
@@ -131,6 +133,72 @@ static void apply_startup_settings(noise_config *c) {
   c->water_bubble_decay_max = 0.58f;
 }
 
+#define EXPORT_BATCH 4096u
+#define EXPORT_BIT_RATE 256000u /* Broadband noise is the hardest case for AAC. */
+
+static OSStatus export_m4a(NSURL *url, const noise_config *config, uint32_t seed,
+                           uint32_t frames, void (^progress)(uint32_t done)) {
+  noise_gen *gen = malloc(sizeof(*gen));
+  if (!gen) return kAudio_MemFullError;
+  if (noise_init(gen, config, seed) != NOISE_OK) {
+    free(gen);
+    return kAudio_ParamError;
+  }
+  AudioStreamBasicDescription aac = {
+      .mSampleRate = NOISE_SAMPLE_RATE_HZ,
+      .mFormatID = kAudioFormatMPEG4AAC,
+      .mChannelsPerFrame = NOISE_CHANNELS};
+  AudioStreamBasicDescription pcm = {
+      .mSampleRate = NOISE_SAMPLE_RATE_HZ,
+      .mFormatID = kAudioFormatLinearPCM,
+      .mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked |
+                      kAudioFormatFlagsNativeEndian,
+      .mBytesPerPacket = NOISE_CHANNELS * sizeof(int16_t),
+      .mFramesPerPacket = 1,
+      .mBytesPerFrame = NOISE_CHANNELS * sizeof(int16_t),
+      .mChannelsPerFrame = NOISE_CHANNELS,
+      .mBitsPerChannel = 16};
+  ExtAudioFileRef file = NULL;
+  OSStatus status = ExtAudioFileCreateWithURL((__bridge CFURLRef)url, kAudioFileM4AType, &aac,
+                                              NULL, kAudioFileFlags_EraseFile, &file);
+  if (status == noErr) {
+    status = ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat,
+                                     sizeof(pcm), &pcm);
+  }
+  if (status == noErr) {
+    AudioConverterRef converter = NULL;
+    UInt32 size = sizeof(converter);
+    status = ExtAudioFileGetProperty(file, kExtAudioFileProperty_AudioConverter,
+                                     &size, &converter);
+    UInt32 bitRate = EXPORT_BIT_RATE;
+    if (status == noErr) {
+      status = AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate,
+                                         sizeof(bitRate), &bitRate);
+    }
+    CFArrayRef noConfig = NULL;
+    if (status == noErr) {
+      status = ExtAudioFileSetProperty(file, kExtAudioFileProperty_ConverterConfig,
+                                       sizeof(noConfig), &noConfig);
+    }
+  }
+  static int16_t batch[EXPORT_BATCH * NOISE_CHANNELS];
+  uint32_t done = 0;
+  while (status == noErr && done < frames) {
+    uint32_t count = frames - done < EXPORT_BATCH ? frames - done : EXPORT_BATCH;
+    noise_fill(gen, batch, count);
+    AudioBufferList buffers = {1, {{NOISE_CHANNELS, count * pcm.mBytesPerFrame, batch}}};
+    status = ExtAudioFileWrite(file, count, &buffers);
+    done += count;
+    if (done % (10u * NOISE_SAMPLE_RATE_HZ) < count || done == frames) progress(done);
+  }
+  if (file) {
+    OSStatus closed = ExtAudioFileDispose(file);
+    if (status == noErr) status = closed;
+  }
+  free(gen);
+  return status;
+}
+
 @interface NoiseAppDelegate : NSObject <NSApplicationDelegate, NSTextFieldDelegate>
 @end
 
@@ -138,6 +206,7 @@ static void apply_startup_settings(noise_config *c) {
   NSWindow *_window;
   NSButton *_playButton;
   NSButton *_varyButton;
+  NSButton *_exportButton;
   NSTextField *_statusLabel;
   NSTextField *_seedField;
   NSSlider *_sliders[NoiseControlCount];
@@ -188,6 +257,8 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   config.cricket_pitch_hz = [self controlValue:NoiseControlCricketPitch];
   config.cricket_pitch_variation = [self controlValue:NoiseControlCricketPitchVariation];
   config.cricket_stereo_width = [self controlValue:NoiseControlCricketWidth];
+  config.cricket_min_distance_m = [self controlValue:NoiseControlCricketMinDistance];
+  config.cricket_max_distance_m = [self controlValue:NoiseControlCricketMaxDistance];
   config.ambient_gain[NOISE_KIND_CICADAS] = [self controlValue:NoiseControlCicadaGain];
   config.cicada_pitch_hz = [self controlValue:NoiseControlCicadaPitch];
   config.cicada_pulse_rate_hz = [self controlValue:NoiseControlCicadaPulseRate];
@@ -357,7 +428,8 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
     return [NSString stringWithFormat:@"%.0f", value];
   }
   if (control == NoiseControlStereoWidth || control == NoiseControlMinDistance ||
-      control == NoiseControlMaxDistance) {
+      control == NoiseControlMaxDistance || control == NoiseControlCricketMinDistance ||
+      control == NoiseControlCricketMaxDistance) {
     return [NSString stringWithFormat:@"%.3f", value];
   }
   return [NSString stringWithFormat:@"%.2f", value];
@@ -400,6 +472,12 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   } else if (control == NoiseControlMaxDistance &&
              value < [self controlValue:NoiseControlMinDistance]) {
     [self storeControl:NoiseControlMinDistance value:value];
+  } else if (control == NoiseControlCricketMinDistance &&
+             value > [self controlValue:NoiseControlCricketMaxDistance]) {
+    [self storeControl:NoiseControlCricketMaxDistance value:value];
+  } else if (control == NoiseControlCricketMaxDistance &&
+             value < [self controlValue:NoiseControlCricketMinDistance]) {
+    [self storeControl:NoiseControlCricketMinDistance value:value];
   } else if (control == NoiseControlThunderMinDistance &&
              value > [self controlValue:NoiseControlThunderMaxDistance]) {
     [self storeControl:NoiseControlThunderMaxDistance value:value];
@@ -548,8 +626,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
       @"Strike queued until playback starts";
 }
 
-- (void)resetGenerator:(NSButton *)sender {
-  (void)sender;
+- (BOOL)parseSeed:(uint32_t *)seed {
   const char *text = _seedField.stringValue.UTF8String;
   char *end;
   errno = 0;
@@ -557,13 +634,67 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   if (!text[0] || text[0] < '0' || text[0] > '9' || *end || errno == ERANGE ||
       parsed > UINT32_MAX) {
     _statusLabel.stringValue = @"Seed must be an integer from 0 to 4294967295";
+    return NO;
+  }
+  *seed = (uint32_t)parsed;
+  return YES;
+}
+
+- (void)exportAudio:(NSButton *)sender {
+  (void)sender;
+  uint32_t seed;
+  if (![self parseSeed:&seed]) return;
+  noise_config config = [self configFromControls];
+
+  NSTextField *durationLabel = [NSTextField labelWithString:@"Duration (s)"];
+  NSTextField *durationField = [NSTextField textFieldWithString:@"60"];
+  [durationField.widthAnchor constraintEqualToConstant:80.0].active = YES;
+  NSStackView *accessory = [NSStackView stackViewWithViews:@[durationLabel, durationField]];
+  accessory.edgeInsets = NSEdgeInsetsMake(8.0, 8.0, 8.0, 8.0);
+  NSSavePanel *panel = [NSSavePanel savePanel];
+  panel.nameFieldStringValue = @"noise.m4a";
+  panel.accessoryView = accessory;
+  if ([panel runModal] != NSModalResponseOK) return;
+
+  char *end;
+  const char *text = durationField.stringValue.UTF8String;
+  double seconds = strtod(text, &end);
+  if (!text[0] || *end || !(seconds >= 1.0 && seconds <= 86400.0)) {
+    _statusLabel.stringValue = @"Duration must be from 1 to 86400 seconds";
     return;
   }
+  uint32_t frames = (uint32_t)(seconds * NOISE_SAMPLE_RATE_HZ);
+  NSURL *url = panel.URL;
+  if (![url.pathExtension.lowercaseString isEqualToString:@"m4a"]) {
+    url = [url URLByAppendingPathExtension:@"m4a"];
+  }
+  _exportButton.enabled = NO;
+  _statusLabel.stringValue = @"Exporting…";
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    OSStatus status = export_m4a(url, &config, seed, frames, ^(uint32_t done) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        self->_statusLabel.stringValue = [NSString stringWithFormat:@"Exporting… %.0f%%",
+                                          100.0 * done / frames];
+      });
+    });
+    dispatch_async(dispatch_get_main_queue(), ^{
+      self->_exportButton.enabled = YES;
+      self->_statusLabel.stringValue = status == noErr ?
+          [NSString stringWithFormat:@"Exported %.0f s to %@", seconds, url.lastPathComponent] :
+          [NSString stringWithFormat:@"Export error: %d", status];
+    });
+  });
+}
+
+- (void)resetGenerator:(NSButton *)sender {
+  (void)sender;
+  uint32_t seed;
+  if (![self parseSeed:&seed]) return;
 
   BOOL resume = _playing;
   if (resume) AudioOutputUnitStop(_audioUnit);
   noise_config config = [self configFromControls];
-  noise_result result = noise_init(&_generator, &config, (uint32_t)parsed);
+  noise_result result = noise_init(&_generator, &config, seed);
   _appliedRainControl = config.rain_intensity;
   _appliedVary = config.vary_rain;
   if (result != NOISE_OK) {
@@ -686,14 +817,18 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
       [self sliderRow:@"Gain" control:NoiseControlCricketGain
                  value:defaults.ambient_gain[NOISE_KIND_CRICKETS]
                minimum:0 maximum:1 logarithmic:NO],
-      [self sliderRow:@"Call rate (Hz)" control:NoiseControlCricketCallRate
+      [self sliderRow:@"Chirps/s each" control:NoiseControlCricketCallRate
                  value:defaults.cricket_call_rate_hz minimum:0.05 maximum:10 logarithmic:YES],
       [self sliderRow:@"Pitch (Hz)" control:NoiseControlCricketPitch
                  value:defaults.cricket_pitch_hz minimum:2000 maximum:8000 logarithmic:YES],
       [self sliderRow:@"Pitch variation" control:NoiseControlCricketPitchVariation
                  value:defaults.cricket_pitch_variation minimum:0 maximum:1 logarithmic:NO],
-      [self sliderRow:@"Stereo width" control:NoiseControlCricketWidth
+      [self sliderRow:@"Angular spread" control:NoiseControlCricketWidth
                  value:defaults.cricket_stereo_width minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Min distance (m)" control:NoiseControlCricketMinDistance
+                 value:defaults.cricket_min_distance_m minimum:0.25 maximum:100 logarithmic:YES],
+      [self sliderRow:@"Max distance (m)" control:NoiseControlCricketMaxDistance
+                 value:defaults.cricket_max_distance_m minimum:0.25 maximum:100 logarithmic:YES],
       [self sectionLabel:@"Cicadas"],
       [self sliderRow:@"Gain" control:NoiseControlCicadaGain
                  value:defaults.ambient_gain[NOISE_KIND_CICADAS]
@@ -894,7 +1029,10 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   _playButton.bezelStyle = NSBezelStyleRounded;
   _statusLabel = [NSTextField labelWithString:@"Ready"];
   _statusLabel.textColor = NSColor.secondaryLabelColor;
-  NSStackView *playback = [NSStackView stackViewWithViews:@[_playButton, _statusLabel]];
+  _exportButton = [NSButton buttonWithTitle:@"Export…" target:self
+                                     action:@selector(exportAudio:)];
+  NSStackView *playback = [NSStackView stackViewWithViews:@[_playButton, _exportButton,
+                                                            _statusLabel]];
   playback.orientation = NSUserInterfaceLayoutOrientationHorizontal;
   playback.alignment = NSLayoutAttributeCenterY;
   playback.spacing = 12.0;

@@ -54,10 +54,21 @@ the smoothing rate; gust depth blends between constant and modulated amplitude.
 Wind uses a separate random stream, so enabling it does not change rain or the
 other ambient layers.
 
-Crickets use four call voices. Each call contains three to five gated carrier
-pulses, with randomized pulse timing, pitch, and stereo position. Call rate
-sets the probability of starting a call on each frame. Pitch variation ranges
-from no detuning to plus or minus 30 percent of the configured carrier pitch.
+Crickets are four persistent individuals. Each keeps its own pitch offset,
+position, pulse timing, and three to five pulses per chirp. Each
+chirps on a steady period of 1 / call rate, scaled by a fixed 0.9 to 1.1 per
+cricket, with 3 percent jitter per chirp; the small rate differences let the
+chorus drift in and out of phase. Each cricket alternates singing and silent
+bouts with exponential lengths, means 30 s and 10 s. Within each pulse the
+carrier falls 3 percent, as the wing's tooth strikes slow. Pitch variation sets
+the spread between crickets, up to plus or minus 30 percent of the configured
+pitch. Each cricket is a point source through the same spatial model as a rain
+drop: 1/r level, ear delay, head shadow, and rear filter. Distance is
+area-uniform between the cricket distance bounds. Stereo width is angular
+spread: at 0 every cricket is in front, at 1 they surround the listener. The
+cricket signal before distance attenuation feeds the rain reverb, like the rain
+send. Pitch changes apply at the next pulse; position and rate changes apply at
+the next chirp.
 
 Cicadas use three slightly detuned carrier oscillators. A fourth oscillator
 amplitude-modulates the chorus at the configured pulse rate. Texture blends in
@@ -506,8 +517,9 @@ Configuration ranges are:
 - Ambient, rain, master, and reverb gains: 0 to 1 each.
 - Wind brightness, gust depth, and stereo width: 0 to 1. Gust rate: 0.01 to
   2 Hz.
-- Cricket call rate: 0.05 to 10 Hz. Pitch: 2 to 8 kHz. Pitch variation and
-  stereo width: 0 to 1.
+- Cricket call rate: 0.05 to 10 chirps/s per cricket. Pitch: 2 to 8 kHz.
+  Pitch variation and stereo width: 0 to 1. Distance bounds: 0.25 to 100 m,
+  ordered; defaults 2 and 15 m.
 - Cicada pitch: 2 to 10 kHz. Pulse rate: 10 to 120 Hz. Texture and stereo
   width: 0 to 1.
 - Thunder gain: 0 to 1, default 0. Strike rate: 0 to 20 per minute, default 2.

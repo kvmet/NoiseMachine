@@ -11,6 +11,9 @@
 #define THUNDER_REFERENCE_M 1000.0f
 #define THUNDER_FINE_STEP_M 3.0f
 #define THUNDER_ROUGHNESS 0.3f
+#define CRICKET_PULSE_DROP 0.03f /* Carrier falls through each pulse as the wing slows. */
+#define CRICKET_SINGING_S 30.0f /* Mean bout lengths. */
+#define CRICKET_SILENT_S 10.0f
 
 static const unsigned reverb_length[NOISE_REVERB_LINES] = {
   739, 953, 1151, 1327, 1471, 1663
@@ -86,6 +89,8 @@ static int valid_config(const noise_config *c) {
       !in_range(c->cricket_pitch_hz, 2000.0f, 8000.0f) ||
       !in_range(c->cricket_pitch_variation, 0.0f, 1.0f) ||
       !in_range(c->cricket_stereo_width, 0.0f, 1.0f) ||
+      !in_range(c->cricket_min_distance_m, 0.25f, 100.0f) ||
+      !in_range(c->cricket_max_distance_m, c->cricket_min_distance_m, 100.0f) ||
       !in_range(c->cicada_pitch_hz, 2000.0f, 10000.0f) ||
       !in_range(c->cicada_pulse_rate_hz, 10.0f, 120.0f) ||
       !in_range(c->cicada_texture, 0.0f, 1.0f) ||
@@ -136,6 +141,8 @@ void noise_config_default(noise_config *c) {
   c->cricket_pitch_hz = 4500.0f;
   c->cricket_pitch_variation = 0.35f;
   c->cricket_stereo_width = 0.8f;
+  c->cricket_min_distance_m = 2.0f;
+  c->cricket_max_distance_m = 15.0f;
   c->cicada_pitch_hz = 6500.0f;
   c->cicada_pulse_rate_hz = 45.0f;
   c->cicada_texture = 0.35f;
@@ -281,7 +288,7 @@ static const float material_modes[NOISE_SURFACE_COUNT][7] = {
   {140.0f, 300.0f, 420.0f, 700.0f, 0.4f, 0.25f, 900.0f}
 };
 
-static void spatial_init(noise_drop_voice *voice, const noise_config *config,
+static void spatial_init(noise_spatial *voice, const noise_config *config,
                          position_polar position) {
   float radius = 0.5f * config->stereo_width_m;
   float distance = position.distance_m;
@@ -326,7 +333,23 @@ static void spatial_init(noise_drop_voice *voice, const noise_config *config,
   float rear = 0.5f * (1.0f - cosf(position.angle_rad));
   float cutoff = 18000.0f - 15000.0f * rear;
   voice->lowpass_alpha = -expm1f(-2.0f * NOISE_PI * cutoff / NOISE_SAMPLE_RATE_HZ);
-  voice->filter_tail = 256;
+}
+
+static void spatial_next(noise_gen *gen, noise_spatial *voice, float source) {
+  voice->lowpass_state += voice->lowpass_alpha * (source - voice->lowpass_state);
+  float direct = source + gen->config.rear_amount * (voice->lowpass_state - source);
+  for (unsigned ear = 0; ear < 2; ++ear) {
+    float filtered = voice->head_b0[ear] * direct +
+        voice->head_b1[ear] * voice->head_previous_input +
+        voice->head_feedback * voice->head_state[ear];
+    voice->head_state[ear] = filtered;
+    unsigned position = gen->direct_position + voice->ear_delay[ear];
+    for (unsigned tap = 0; tap < 4; ++tap) {
+      gen->direct[ear][(position + tap) % NOISE_DIRECT_SAMPLES] +=
+          filtered * voice->ear_gain[ear] * voice->delay_weight[ear][tap];
+    }
+  }
+  voice->head_previous_input = direct;
 }
 
 static noise_result start_drop(noise_gen *gen, const droplet *drop) {
@@ -372,7 +395,8 @@ static noise_result start_drop(noise_gen *gen, const droplet *drop) {
     mode_init(&voice->mode[1], m[0] * tuning, m[1], amplitude * m[4], 0);
     mode_init(&voice->mode[2], m[2] * tuning, m[3], amplitude * m[4] * 0.5f, 0);
   }
-  spatial_init(voice, &gen->config, drop->position);
+  spatial_init(&voice->spatial, &gen->config, drop->position);
+  voice->filter_tail = 256;
   return NOISE_OK;
 }
 
@@ -507,61 +531,110 @@ static void weather_next(noise_gen *gen) {
   gen->state.rain_intensity = next;
 }
 
-static void start_cricket(noise_gen *gen, noise_cricket_voice *voice) {
-  unsigned pulses = 3u + random_u32(&gen->cricket_rng) % 3u;
-  voice->pulse_samples = (uint32_t)(NOISE_SAMPLE_RATE_HZ *
-      random_between(&gen->cricket_rng, 0.026f, 0.036f));
-  voice->sounding_samples = (uint32_t)(voice->pulse_samples *
-      random_between(&gen->cricket_rng, 0.55f, 0.70f));
-  voice->total_samples = pulses * voice->pulse_samples;
-  voice->remaining = voice->total_samples;
-  float detune = gen->config.cricket_pitch_variation *
-                 random_between(&gen->cricket_rng, -0.3f, 0.3f);
-  oscillator_init(&voice->oscillator, gen->config.cricket_pitch_hz * (1.0f + detune));
-  float pan = gen->config.cricket_stereo_width *
-              random_between(&gen->cricket_rng, -1.0f, 1.0f);
-  voice->channel_gain[0] = 0.7f * (1.0f - pan);
-  voice->channel_gain[1] = 0.7f * (1.0f + pan);
+static uint32_t cricket_bout(noise_gen *gen, unsigned singing) {
+  float mean_s = singing ? CRICKET_SINGING_S : CRICKET_SILENT_S;
+  return 1u + (uint32_t)(-mean_s * NOISE_SAMPLE_RATE_HZ *
+                         logf(1.0f - random_unit(&gen->cricket_rng)));
 }
 
-static void insects_next(noise_gen *gen, float *left, float *right) {
-  const float *gain = gen->config.ambient_gain;
-  if (gain[NOISE_KIND_CRICKETS] > 0.0f) {
-    int trigger = !gen->cricket_started;
-    gen->cricket_started = 1;
-    if (!trigger) {
-      trigger = random_unit(&gen->cricket_rng) <
-                gen->config.cricket_call_rate_hz / NOISE_SAMPLE_RATE_HZ;
-    }
-    if (trigger) {
-      for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) {
-        if (gen->crickets[i].remaining == 0) {
-          start_cricket(gen, &gen->crickets[i]);
-          break;
-        }
-      }
-    }
-    for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) {
-      noise_cricket_voice *voice = &gen->crickets[i];
-      if (voice->remaining == 0) continue;
-      uint32_t position = voice->total_samples - voice->remaining;
-      uint32_t within_pulse = position % voice->pulse_samples;
-      float carrier = oscillator_next(&voice->oscillator);
-      if (within_pulse < voice->sounding_samples) {
-        uint32_t attack = voice->sounding_samples / 4u;
-        float envelope = within_pulse < attack ?
-            (float)within_pulse / (float)attack :
-            (float)(voice->sounding_samples - within_pulse) /
-            (float)(voice->sounding_samples - attack);
-        float tone = carrier - 0.22f * carrier * carrier * carrier;
-        float sample = 0.35f * gain[NOISE_KIND_CRICKETS] * envelope * tone;
-        *left += sample * voice->channel_gain[0];
-        *right += sample * voice->channel_gain[1];
-      }
-      --voice->remaining;
+static uint32_t cricket_period(noise_gen *gen, const noise_cricket_voice *voice) {
+  float period = voice->period_scale * random_between(&gen->cricket_rng, 0.97f, 1.03f) *
+                 NOISE_SAMPLE_RATE_HZ / gen->config.cricket_call_rate_hz;
+  uint32_t chirp = voice->pulses * voice->pulse_samples;
+  return period > (float)chirp ? (uint32_t)period : chirp;
+}
+
+static void cricket_init(noise_gen *gen, noise_cricket_voice *voice) {
+  uint32_t *rng = &gen->cricket_rng;
+  voice->pitch_offset = random_between(rng, -1.0f, 1.0f);
+  voice->angle_offset = random_between(rng, -1.0f, 1.0f);
+  voice->distance_offset = random_unit(rng);
+  voice->period_scale = random_between(rng, 0.9f, 1.1f);
+  voice->pulses = 3u + random_u32(rng) % 3u;
+  voice->pulse_samples = (uint32_t)(NOISE_SAMPLE_RATE_HZ * random_between(rng, 0.026f, 0.036f));
+  voice->sounding_samples = (uint32_t)(voice->pulse_samples * random_between(rng, 0.55f, 0.70f));
+  voice->chirp_samples = voice->pulses * voice->pulse_samples;
+  voice->singing = random_unit(rng) < CRICKET_SINGING_S / (CRICKET_SINGING_S + CRICKET_SILENT_S);
+  voice->bout_samples = cricket_bout(gen, voice->singing);
+  voice->until_chirp = (uint32_t)(random_unit(rng) * (float)cricket_period(gen, voice));
+}
+
+static void cricket_place(noise_gen *gen, noise_cricket_voice *voice) {
+  const noise_config *c = &gen->config;
+  float near = c->cricket_min_distance_m;
+  float far = c->cricket_max_distance_m;
+  position_polar position = {
+    sqrtf(near * near + voice->distance_offset * (far * far - near * near)),
+    NOISE_PI * c->cricket_stereo_width * voice->angle_offset
+  };
+  spatial_init(&voice->spatial, c, position);
+}
+
+/* Returns the reverb send; the direct sound goes through the spatial model. */
+static float cricket_next(noise_gen *gen, noise_cricket_voice *voice, float gain) {
+  if (--voice->bout_samples == 0) {
+    voice->singing = !voice->singing;
+    voice->bout_samples = cricket_bout(gen, voice->singing);
+  }
+  if (voice->until_chirp == 0) {
+    voice->until_chirp = cricket_period(gen, voice);
+    if (voice->singing) {
+      voice->chirp_samples = 0;
+      cricket_place(gen, voice);
     }
   }
+  --voice->until_chirp;
+  float sample = 0.0f;
+  if (voice->chirp_samples < voice->pulses * voice->pulse_samples) {
+    uint32_t within_pulse = voice->chirp_samples % voice->pulse_samples;
+    ++voice->chirp_samples;
+    if (within_pulse == 0) {
+      float pitch = gen->config.cricket_pitch_hz *
+                    (1.0f + 0.3f * gen->config.cricket_pitch_variation * voice->pitch_offset);
+      oscillator_init(&voice->oscillator, pitch);
+      float end = 2.0f * cosf(2.0f * NOISE_PI * pitch * (1.0f - CRICKET_PULSE_DROP) /
+                              NOISE_SAMPLE_RATE_HZ);
+      voice->glide = (end - voice->oscillator.coefficient) / (float)voice->sounding_samples;
+    }
+    if (within_pulse < voice->sounding_samples) {
+      float carrier = oscillator_next(&voice->oscillator);
+      voice->oscillator.coefficient += voice->glide;
+      uint32_t attack = voice->sounding_samples / 4u;
+      float envelope = within_pulse < attack ?
+          (float)within_pulse / (float)attack :
+          (float)(voice->sounding_samples - within_pulse) /
+          (float)(voice->sounding_samples - attack);
+      float tone = carrier - 0.22f * carrier * carrier * carrier;
+      sample = 0.35f * gain * envelope * tone;
+    }
+  }
+  /* Runs between chirps too, so filter tails decay instead of holding. */
+  spatial_next(gen, &voice->spatial, sample);
+  return sample;
+}
 
+static float crickets_next(noise_gen *gen) {
+  float gain = gen->config.ambient_gain[NOISE_KIND_CRICKETS];
+  if (gain <= 0.0f) return 0.0f;
+  if (!gen->cricket_started) {
+    gen->cricket_started = 1;
+    for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) {
+      cricket_init(gen, &gen->crickets[i]);
+      cricket_place(gen, &gen->crickets[i]);
+    }
+    /* The layer is audible from its first frame. */
+    gen->crickets[0].singing = 1;
+    gen->crickets[0].until_chirp = 0;
+  }
+  float send = 0.0f;
+  for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) {
+    send += cricket_next(gen, &gen->crickets[i], gain);
+  }
+  return send;
+}
+
+static void cicadas_next(noise_gen *gen, float *left, float *right) {
+  const float *gain = gen->config.ambient_gain;
   if (gain[NOISE_KIND_CICADAS] <= 0.0f) return;
   if (gen->config.cicada_pitch_hz != gen->cicada_pitch_cache) {
     float pitch = gen->config.cicada_pitch_hz;
@@ -665,7 +738,7 @@ static void ambient_next(noise_gen *gen, float *left, float *right) {
                            0.30f * gen->wind_rumble[channel]);
     }
   }
-  insects_next(gen, left, right);
+  cicadas_next(gen, left, right);
 }
 
 typedef struct thunder_build {
@@ -1052,20 +1125,7 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
       }
       source *= rain_gain;
       send += source;
-      voice->lowpass_state += voice->lowpass_alpha * (source - voice->lowpass_state);
-      float direct = source + gen->config.rear_amount * (voice->lowpass_state - source);
-      for (unsigned ear = 0; ear < 2; ++ear) {
-        float filtered = voice->head_b0[ear] * direct +
-            voice->head_b1[ear] * voice->head_previous_input +
-            voice->head_feedback * voice->head_state[ear];
-        voice->head_state[ear] = filtered;
-        unsigned position = gen->direct_position + voice->ear_delay[ear];
-        for (unsigned tap = 0; tap < 4; ++tap) {
-          gen->direct[ear][(position + tap) % NOISE_DIRECT_SAMPLES] +=
-              filtered * voice->ear_gain[ear] * voice->delay_weight[ear][tap];
-        }
-      }
-      voice->head_previous_input = direct;
+      spatial_next(gen, &voice->spatial, source);
       if (!remaining) voice->filter_tail -= 1;
       if (!remaining && voice->filter_tail == 0) {
         /* Keep the active prefix dense to avoid scanning idle voices per sample. */
@@ -1075,6 +1135,7 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
         ++i;
       }
     }
+    send += crickets_next(gen);
     left = gen->direct[0][gen->direct_position];
     right = gen->direct[1][gen->direct_position];
     gen->direct[0][gen->direct_position] = 0.0f;
