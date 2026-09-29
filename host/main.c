@@ -41,12 +41,12 @@ static int write_wav_header(FILE *file, uint32_t frames) {
 static void print_usage(const char *program) {
   fprintf(stderr,
       "usage: %s [options] OUTPUT.wav\n"
-      "  -k white|pink|hum50|hum60|rain   repeat to mix layers\n"
+      "  -k white|pink|hum50|hum60|wind|rain   repeat to mix layers\n"
       "  -r intensity   fixed rain intensity, 0..1\n"
       "  -v             vary rain with the Markov controller\n"
       "  -l minimum     minimum varying intensity, 0..1\n"
       "  -u maximum     maximum varying intensity, 0..1\n"
-      "  -m mixed|water|dirt|leaf|concrete|glass|metal|plastic|asphalt|asphalt-roof|tin-roof\n"
+      "  -m mixed|water|dirt|leaf|concrete|glass|metal|plastic|asphalt|asphalt-roof\n"
       "  -n rate        arrivals/second at full intensity, 0..2000\n"
       "  -b metres      ear spacing / head diameter, 0..0.5; default 0.18\n"
       "  -a amount      head model strength, 0..1; 0 bypasses it\n"
@@ -104,7 +104,7 @@ int main(int argc, char **argv) {
       if (strcmp(value, "rain") == 0) {
         rain = 1;
       } else {
-        static const char *names[] = {"white", "pink", "hum50", "hum60"};
+        static const char *names[] = {"white", "pink", "hum50", "hum60", "wind"};
         unsigned kind = 0;
         while (kind < NOISE_KIND_COUNT && strcmp(value, names[kind])) ++kind;
         if (kind == NOISE_KIND_COUNT) {
@@ -116,7 +116,7 @@ int main(int argc, char **argv) {
     } else if (strcmp(arg, "-m") == 0) {
       static const char *names[] = {
         "water", "dirt", "leaf", "concrete", "glass", "metal", "plastic", "asphalt",
-        "asphalt-roof", "tin-roof"
+        "asphalt-roof"
       };
       if (strcmp(value, "mixed") == 0) {
         noise_config defaults;

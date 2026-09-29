@@ -3,16 +3,16 @@
 A portable C synthesis engine for ambient noise and rain, with a desktop WAV
 renderer and an Arduino sketch for eventual ESP32 audio output.
 
-- Mix white noise, pink noise, 50 Hz hum, and 60 Hz hum.
+- Mix white noise, pink noise, 50 Hz hum, 60 Hz hum, and synthesized wind.
 - Generate individual rain impacts on water, dirt, leaves, concrete, glass,
-  metal, plastic, asphalt, tin roofs, and asphalt roofs, with water-bubble
+  metal, plastic, asphalt, and asphalt roofs, with water-bubble
   resonance and optional Markov intensity changes.
 - Place drops around the listener with per-ear attenuation, fractional delay,
   a tunable spherical-head HRTF, rear filtering, and shared stereo reverb.
 
 The [model documentation](docs/index.md) gives the equations, units,
 assumptions, material presets, API contract, and cited references.
-Wind and thunder are deferred.
+Thunder and wildlife are deferred.
 
 ## Build and listen
 
@@ -57,8 +57,9 @@ make -C host gui
 ./host/noise_gui
 ```
 
-Press **Start** for continuous playback. The Mixer, Rain, Water, Weather Mod,
-and Spatial tabs expose every field in `noise_config`. Water controls randomized
+Press **Start** for continuous playback. The Mixer, Wind, Rain, Water,
+Weather Mod, and Spatial tabs expose every field in `noise_config`. Wind has
+gain, brightness, gust depth, gust rate, and stereo width controls. Water controls randomized
 impact gain, bubble probability, radius, gain, and decay ranges. Weather Mod
 routes intensity to density, size, gain, reverb, physical, and surface
 parameters with bipolar attenuverters. Type an exact value or use a slider;
@@ -71,7 +72,7 @@ resetting the generator clears all current audio state.
 
 Run `./host/noise_host -h` for usage.
 
-- `-k white|pink|hum50|hum60|rain`: select a layer; repeat to mix. Each
+- `-k white|pink|hum50|hum60|wind|rain`: select a layer; repeat to mix. Each
   ambient layer has gain 0.3. With no layer or rain option, default to pink.
 - `-r NUMBER`: fixed rain intensity from 0 to 1. Enables rain even without
   `-k rain`. Default rain intensity is 0.5.
@@ -79,7 +80,7 @@ Run `./host/noise_host -h` for usage.
   unless `-r` supplies an initial value.
 - `-l NUMBER`, `-u NUMBER`: lower and upper varying-intensity bounds.
   Defaults: 0.15 and 0.85. An explicit initial intensity must be within them.
-- `-m mixed|water|dirt|leaf|concrete|glass|metal|plastic|asphalt|asphalt-roof|tin-roof`:
+- `-m mixed|water|dirt|leaf|concrete|glass|metal|plastic|asphalt|asphalt-roof`:
   rain material. Default: mixed. The mix is 37% water, 21% dirt, 26% leaves,
   15% concrete, and 0.5% each glass and metal. Plastic, asphalt, and roof
   weights default to zero.

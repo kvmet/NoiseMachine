@@ -15,6 +15,11 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlPink,
   NoiseControlHum50,
   NoiseControlHum60,
+  NoiseControlWindGain,
+  NoiseControlWindBrightness,
+  NoiseControlWindGustDepth,
+  NoiseControlWindGustRate,
+  NoiseControlWindWidth,
   NoiseControlRainGain,
   NoiseControlMaster,
   NoiseControlRainIntensity,
@@ -33,7 +38,6 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlPlasticWeight,
   NoiseControlAsphaltWeight,
   NoiseControlAsphaltRoofWeight,
-  NoiseControlTinRoofWeight,
   NoiseControlMinDistance,
   NoiseControlMaxDistance,
   NoiseControlStereoWidth,
@@ -56,7 +60,6 @@ typedef NS_ENUM(NSInteger, NoiseControl) {
   NoiseControlModPlastic,
   NoiseControlModAsphalt,
   NoiseControlModAsphaltRoof,
-  NoiseControlModTinRoof,
   NoiseControlWaterImpactMin,
   NoiseControlWaterImpactMax,
   NoiseControlWaterBubbleProbability,
@@ -113,6 +116,11 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   config.ambient_gain[NOISE_KIND_PINK] = [self controlValue:NoiseControlPink];
   config.ambient_gain[HUM_50HZ] = [self controlValue:NoiseControlHum50];
   config.ambient_gain[HUM_60HZ] = [self controlValue:NoiseControlHum60];
+  config.ambient_gain[NOISE_KIND_WIND] = [self controlValue:NoiseControlWindGain];
+  config.wind_brightness = [self controlValue:NoiseControlWindBrightness];
+  config.wind_gust_depth = [self controlValue:NoiseControlWindGustDepth];
+  config.wind_gust_rate_hz = [self controlValue:NoiseControlWindGustRate];
+  config.wind_stereo_width = [self controlValue:NoiseControlWindWidth];
   config.rain_gain = [self controlValue:NoiseControlRainGain];
   config.master_gain = [self controlValue:NoiseControlMaster];
   config.rain_intensity = [self controlValue:NoiseControlRainIntensity];
@@ -258,7 +266,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 
 - (NSString *)formattedValue:(double)value control:(NoiseControl)control {
   if (control == NoiseControlDropRate) return [NSString stringWithFormat:@"%.0f", value];
-  if (control >= NoiseControlWaterWeight && control <= NoiseControlTinRoofWeight) {
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlAsphaltRoofWeight) {
     return [NSString stringWithFormat:@"%.6g", value];
   }
   if (control == NoiseControlStereoWidth || control == NoiseControlMinDistance ||
@@ -271,7 +279,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 - (void)storeControl:(NoiseControl)control value:(double)value {
   value = fmin(_maximum[control], fmax(_minimum[control], value));
   atomic_store_explicit(&_controls[control], (float)value, memory_order_relaxed);
-  if (control >= NoiseControlWaterWeight && control <= NoiseControlTinRoofWeight) {
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlAsphaltRoofWeight) {
     _sliders[control].doubleValue = value > 0.0 ? fmax(-7.0, log10(value)) : -7.0;
   } else {
     _sliders[control].doubleValue = _logarithmic[control] ? log(value) : value;
@@ -281,10 +289,10 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 
 - (void)setControl:(NoiseControl)control value:(double)value {
   value = fmin(_maximum[control], fmax(_minimum[control], value));
-  if (control >= NoiseControlWaterWeight && control <= NoiseControlTinRoofWeight &&
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlAsphaltRoofWeight &&
       value == 0.0) {
     double other = 0.0;
-    for (NoiseControl i = NoiseControlWaterWeight; i <= NoiseControlTinRoofWeight; ++i) {
+    for (NoiseControl i = NoiseControlWaterWeight; i <= NoiseControlAsphaltRoofWeight; ++i) {
       if (i != control) other += [self controlValue:i];
     }
     if (other == 0.0) {
@@ -353,7 +361,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
   [label.widthAnchor constraintEqualToConstant:145.0].active = YES;
 
   BOOL surfaceWeight = control >= NoiseControlWaterWeight &&
-                       control <= NoiseControlTinRoofWeight;
+                       control <= NoiseControlAsphaltRoofWeight;
   double sliderValue = surfaceWeight ? (value > 0.0 ? log10(value) : -7.0) :
                                        (logarithmic ? log(value) : value);
   double sliderMinimum = surfaceWeight ? -7.0 : (logarithmic ? log(minimum) : minimum);
@@ -393,7 +401,7 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
 - (void)sliderChanged:(NSSlider *)sender {
   NoiseControl control = (NoiseControl)sender.tag;
   double value;
-  if (control >= NoiseControlWaterWeight && control <= NoiseControlTinRoofWeight) {
+  if (control >= NoiseControlWaterWeight && control <= NoiseControlAsphaltRoofWeight) {
     value = sender.doubleValue <= -7.0 ? 0.0 : pow(10.0, sender.doubleValue);
   } else {
     value = _logarithmic[control] ? exp(sender.doubleValue) : sender.doubleValue;
@@ -546,6 +554,21 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                  value:defaults.master_gain minimum:0 maximum:1 logarithmic:NO]
   ]];
 
+  NSView *wind = [self tabViewWithRows:@[
+      [self sectionLabel:@"Synthesized wind"],
+      [self sliderRow:@"Gain" control:NoiseControlWindGain
+                 value:defaults.ambient_gain[NOISE_KIND_WIND]
+               minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Brightness" control:NoiseControlWindBrightness
+                 value:defaults.wind_brightness minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Gust depth" control:NoiseControlWindGustDepth
+                 value:defaults.wind_gust_depth minimum:0 maximum:1 logarithmic:NO],
+      [self sliderRow:@"Gust rate (Hz)" control:NoiseControlWindGustRate
+                 value:defaults.wind_gust_rate_hz minimum:0.01 maximum:2 logarithmic:YES],
+      [self sliderRow:@"Stereo width" control:NoiseControlWindWidth
+                 value:defaults.wind_stereo_width minimum:0 maximum:1 logarithmic:NO]
+  ]];
+
   _varyButton = [NSButton checkboxWithTitle:@"Vary rain automatically"
                                      target:self action:@selector(varyChanged:)];
   _varyButton.state = defaults.vary_rain ? NSControlStateValueOn : NSControlStateValueOff;
@@ -598,8 +621,6 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                  value:defaults.surface_weight[ASPHALT] minimum:0 maximum:1 logarithmic:NO],
       [self sliderRow:@"Asphalt roof" control:NoiseControlAsphaltRoofWeight
                  value:defaults.surface_weight[ASPHALT_ROOF] minimum:0 maximum:1 logarithmic:NO],
-      [self sliderRow:@"Tin roof" control:NoiseControlTinRoofWeight
-                 value:defaults.surface_weight[TIN_ROOF] minimum:0 maximum:1 logarithmic:NO],
       seedRow
   ]];
 
@@ -693,14 +714,11 @@ static OSStatus render_audio(void *context, AudioUnitRenderActionFlags *flags,
                minimum:-1 maximum:1 logarithmic:NO],
       [self sliderRow:@"Asphalt roof" control:NoiseControlModAsphaltRoof
                  value:defaults.weather_mod_amount[WEATHER_MOD_ASPHALT_ROOF_WEIGHT]
-               minimum:-1 maximum:1 logarithmic:NO],
-      [self sliderRow:@"Tin roof" control:NoiseControlModTinRoof
-                 value:defaults.weather_mod_amount[WEATHER_MOD_TIN_ROOF_WEIGHT]
                minimum:-1 maximum:1 logarithmic:NO]
   ]];
 
   NSTabView *tabs = [[NSTabView alloc] initWithFrame:NSZeroRect];
-  for (NSArray *item in @[@[@"Mixer", mixer], @[@"Rain", rain], @[@"Water", water],
+  for (NSArray *item in @[@[@"Mixer", mixer], @[@"Wind", wind], @[@"Rain", rain], @[@"Water", water],
                            @[@"Weather Mod", weatherMod], @[@"Spatial", spatial]]) {
     NSTabViewItem *tab = [[NSTabViewItem alloc] initWithIdentifier:item[0]];
     tab.label = item[0];

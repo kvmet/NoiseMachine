@@ -66,6 +66,10 @@ static int valid_config(const noise_config *c) {
       !in_range(c->head_amount, 0.0f, 1.0f) ||
       !in_range(c->rear_amount, 0.0f, 1.0f) ||
       !in_range(c->reverb_gain, 0.0f, 1.0f) ||
+      !in_range(c->wind_brightness, 0.0f, 1.0f) ||
+      !in_range(c->wind_gust_depth, 0.0f, 1.0f) ||
+      !in_range(c->wind_gust_rate_hz, 0.01f, 2.0f) ||
+      !in_range(c->wind_stereo_width, 0.0f, 1.0f) ||
       !in_range(c->water_impact_gain_min, 0.0f, 2.0f) ||
       !in_range(c->water_impact_gain_max, c->water_impact_gain_min, 2.0f) ||
       !in_range(c->water_bubble_probability, 0.0f, 1.0f) ||
@@ -98,6 +102,10 @@ static int valid_config(const noise_config *c) {
 void noise_config_default(noise_config *c) {
   memset(c, 0, sizeof(*c));
   c->ambient_gain[NOISE_KIND_PINK] = 0.3f;
+  c->wind_brightness = 0.5f;
+  c->wind_gust_depth = 0.6f;
+  c->wind_gust_rate_hz = 0.12f;
+  c->wind_stereo_width = 0.5f;
   c->master_gain = 0.8f;
   c->rain_gain = 0.5f;
   c->min_rain_intensity = 0.15f;
@@ -138,9 +146,14 @@ noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t see
   gen->config = copy;
   seed = seed ? seed : 1u;
   gen->ambient_rng = stream_seed(seed, 0x9e3779b9u);
+  gen->wind_rng = stream_seed(seed, 0x1715609du);
   gen->arrival_rng = stream_seed(seed, 0x3c6ef372u);
   gen->drop_rng = stream_seed(seed, 0xdaa66d2bu);
   gen->weather_rng = stream_seed(seed, 0x78dde6e4u);
+  gen->wind_gust = 0.5f;
+  gen->wind_gust_target = 0.5f;
+  gen->wind_brightness_cache = -1.0f;
+  gen->wind_gust_rate_cache = -1.0f;
   gen->state.rain_intensity = copy.rain_intensity;
   gen->state.rain_target = copy.rain_intensity;
   float span = copy.max_rain_intensity - copy.min_rain_intensity;
@@ -205,15 +218,7 @@ static const float material_modes[NOISE_SURFACE_COUNT][7] = {
   {1700.0f, 90.0f, 4300.0f, 150.0f, 0.4f, 1.0f, 0.0f},
   {220.0f, 110.0f, 650.0f, 220.0f, 0.65f, 0.5f, 1600.0f},
   {300.0f, 1600.0f, 900.0f, 2600.0f, 0.25f, 0.3f, 0.0f},
-  {140.0f, 300.0f, 420.0f, 700.0f, 0.4f, 0.25f, 900.0f},
-  {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.35f, 2500.0f}
-};
-
-static const float tin_roof_modes[4][3] = {
-  {320.0f, 120.0f, 0.38f},
-  {730.0f, 170.0f, 0.27f},
-  {1650.0f, 260.0f, 0.18f},
-  {3100.0f, 420.0f, 0.10f}
+  {140.0f, 300.0f, 420.0f, 700.0f, 0.4f, 0.25f, 900.0f}
 };
 
 static void spatial_init(noise_drop_voice *voice, const noise_config *config,
@@ -288,7 +293,6 @@ static noise_result start_drop(noise_gen *gen, const droplet *drop) {
   float impact_frequency = 1000.0f + 15000.0f * random_unit(&gen->drop_rng);
   mode_init(&voice->mode[0], impact_frequency, 2.0f * impact_frequency,
             amplitude * impact_gain, 0);
-  voice->mode_count = 1;
   if (drop->surface == WATER && drop->bubble_radius_m > 0.0f) {
     float r = drop->bubble_radius_m;
     float frequency = sqrtf(3.0f * 1.4f * NOISE_PRESSURE_PA / NOISE_WATER_DENSITY) /
@@ -302,20 +306,11 @@ static noise_result start_drop(noise_gen *gen, const droplet *drop) {
     mode_init(&voice->mode[1], frequency, damping / decay,
               bubble_gain * impact_gain * amplitude,
               (uint32_t)(0.002f * NOISE_SAMPLE_RATE_HZ));
-    voice->mode_count = 2;
-  } else if (drop->surface == TIN_ROOF) {
-    for (unsigned i = 0; i < 4; ++i) {
-      float tuning = 0.85f + 0.3f * random_unit(&gen->drop_rng);
-      mode_init(&voice->mode[i + 1], tin_roof_modes[i][0] * tuning,
-                tin_roof_modes[i][1], amplitude * tin_roof_modes[i][2], 0);
-    }
-    voice->mode_count = 5;
   } else if (drop->surface != WATER) {
     const float *m = material_modes[drop->surface];
     float tuning = 0.85f + 0.3f * random_unit(&gen->drop_rng);
     mode_init(&voice->mode[1], m[0] * tuning, m[1], amplitude * m[4], 0);
     mode_init(&voice->mode[2], m[2] * tuning, m[3], amplitude * m[4] * 0.5f, 0);
-    voice->mode_count = 3;
   }
   spatial_init(voice, &gen->config, drop->position);
   return NOISE_OK;
@@ -452,7 +447,7 @@ static void weather_next(noise_gen *gen) {
   gen->state.rain_intensity = next;
 }
 
-static float ambient_next(noise_gen *gen) {
+static void ambient_next(noise_gen *gen, float *left, float *right) {
   const float *gain = gen->config.ambient_gain;
   float sample = 0.0f;
   if (gain[NOISE_KIND_WHITE] > 0.0f) {
@@ -481,7 +476,43 @@ static float ambient_next(noise_gen *gen) {
         (gen->hum_table[(index + 1) % 882] - gen->hum_table[index]));
   }
   if (++gen->hum_sample == 4410) gen->hum_sample = 0;
-  return sample;
+  *left += sample;
+  *right += sample;
+
+  if (gain[NOISE_KIND_WIND] <= 0.0f) return;
+  float rate = gen->config.wind_gust_rate_hz;
+  if (rate != gen->wind_gust_rate_cache) {
+    gen->wind_gust_rate_cache = rate;
+    gen->wind_gust_alpha = -expm1f(-2.0f * NOISE_PI * rate / NOISE_SAMPLE_RATE_HZ);
+  }
+  float brightness = gen->config.wind_brightness;
+  if (brightness != gen->wind_brightness_cache) {
+    gen->wind_brightness_cache = brightness;
+    float cutoff = 400.0f * powf(20.0f, brightness);
+    gen->wind_air_alpha = -expm1f(-2.0f * NOISE_PI * cutoff / NOISE_SAMPLE_RATE_HZ);
+  }
+  if (gen->wind_gust_samples == 0) {
+    gen->wind_gust_target = random_unit(&gen->wind_rng);
+    gen->wind_gust_samples = (uint32_t)(NOISE_SAMPLE_RATE_HZ / rate);
+  }
+  --gen->wind_gust_samples;
+  gen->wind_gust += gen->wind_gust_alpha * (gen->wind_gust_target - gen->wind_gust);
+  float depth = gen->config.wind_gust_depth;
+  float envelope = 1.0f - depth + depth * (0.35f + 1.3f * gen->wind_gust);
+  const float rumble_alpha = 0.0169533f;
+  float common = 2.0f * random_unit(&gen->wind_rng) - 1.0f;
+  float width = gen->config.wind_stereo_width;
+  float *output[2] = {left, right};
+  for (unsigned channel = 0; channel < 2; ++channel) {
+    float side = 2.0f * random_unit(&gen->wind_rng) - 1.0f;
+    float input = (1.0f - width) * common + width * side;
+    gen->wind_filter[channel] += gen->wind_air_alpha *
+                                 (input - gen->wind_filter[channel]);
+    gen->wind_rumble[channel] += rumble_alpha * (input - gen->wind_rumble[channel]);
+    *output[channel] += gain[NOISE_KIND_WIND] * envelope *
+                        (0.55f * gen->wind_filter[channel] +
+                         0.30f * gen->wind_rumble[channel]);
+  }
 }
 
 static void reverb_next(noise_gen *gen, float send, float gain,
@@ -545,7 +576,7 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
       noise_drop_voice *voice = &gen->voices[i];
       float source = 0.0f;
       unsigned remaining = 0;
-      for (unsigned m = 0; m < voice->mode_count; ++m) {
+      for (unsigned m = 0; m < 3; ++m) {
         source += mode_next(&voice->mode[m]);
         remaining += voice->mode[m].remaining + voice->mode[m].delay;
       }
@@ -590,9 +621,9 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
         gen->config.weather_mod_amount[WEATHER_MOD_REVERB_GAIN] != 0.0f) {
       reverb_next(gen, send, reverb_gain, &left, &right);
     }
-    float ambient = ambient_next(gen);
-    out[2 * frame] = to_sample(gen, (left + ambient) * gen->config.master_gain);
-    out[2 * frame + 1] = to_sample(gen, (right + ambient) * gen->config.master_gain);
+    ambient_next(gen, &left, &right);
+    out[2 * frame] = to_sample(gen, left * gen->config.master_gain);
+    out[2 * frame + 1] = to_sample(gen, right * gen->config.master_gain);
   }
   return frames;
 }

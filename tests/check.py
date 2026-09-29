@@ -28,7 +28,7 @@ def main():
         run(cc, *flags, str(ROOT / "host/main.c"), str(CORE / "noise_core.c"),
             "-lm", "-o", str(host))
         destination = work / "audio.wav"
-        for kind in ("white", "pink", "hum50", "hum60", "rain"):
+        for kind in ("white", "pink", "hum50", "hum60", "wind", "rain"):
             run(str(host), "-k", kind, "-d", "0.125", str(destination), stdout=subprocess.DEVNULL)
             with wave.open(str(destination)) as wav:
                 assert wav.getnchannels() == 2
@@ -41,7 +41,7 @@ def main():
             assert struct.unpack_from("<I", raw, 4)[0] == len(raw) - 8
             assert struct.unpack_from("<I", raw, 40)[0] == len(samples)
         for material in ("water", "dirt", "leaf", "concrete", "glass", "metal",
-                         "plastic", "asphalt", "asphalt-roof", "tin-roof", "mixed"):
+                         "plastic", "asphalt", "asphalt-roof", "mixed"):
             result = run(str(host), "-k", "rain", "-r", "1", "-m", material,
                          "-d", "3", str(destination), capture_output=True, text=True)
             assert "capacity losses: 0" in result.stdout, result.stdout

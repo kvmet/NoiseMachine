@@ -14,13 +14,13 @@ extern "C" {
 #define NOISE_REVERB_LINES 6u
 #define NOISE_REVERB_SAMPLES 7304u
 #define NOISE_DIRECT_SAMPLES 128u
-#define NOISE_MAX_MODES 5u
 
 typedef enum noise_kind {
   NOISE_KIND_WHITE = 0,
   NOISE_KIND_PINK,
   HUM_50HZ,
   HUM_60HZ,
+  NOISE_KIND_WIND,
   NOISE_KIND_COUNT
 } noise_kind;
 
@@ -34,7 +34,6 @@ typedef enum impact_surface {
   PLASTIC,
   ASPHALT,
   ASPHALT_ROOF,
-  TIN_ROOF,
   NOISE_SURFACE_COUNT
 } impact_surface;
 
@@ -55,7 +54,6 @@ typedef enum weather_mod_destination {
   WEATHER_MOD_PLASTIC_WEIGHT,
   WEATHER_MOD_ASPHALT_WEIGHT,
   WEATHER_MOD_ASPHALT_ROOF_WEIGHT,
-  WEATHER_MOD_TIN_ROOF_WEIGHT,
   NOISE_WEATHER_MOD_COUNT
 } weather_mod_destination;
 
@@ -81,6 +79,10 @@ typedef struct droplet {
 
 typedef struct noise_config {
   float ambient_gain[NOISE_KIND_COUNT]; /* Independent linear gains, each 0..1. */
+  float wind_brightness;
+  float wind_gust_depth;
+  float wind_gust_rate_hz;
+  float wind_stereo_width;
   float master_gain;
   float rain_gain;
   float rain_intensity; /* Initial intensity, 0..1; zero means no arrivals. */
@@ -120,8 +122,7 @@ typedef struct noise_mode {
 } noise_mode;
 
 typedef struct noise_drop_voice {
-  noise_mode mode[NOISE_MAX_MODES];
-  unsigned mode_count;
+  noise_mode mode[3];
   float ear_gain[2];
   unsigned ear_delay[2];
   float delay_weight[2][4];
@@ -153,10 +154,20 @@ typedef struct noise_gen {
   noise_config config;
   noise_state state;
   uint32_t ambient_rng;
+  uint32_t wind_rng;
   uint32_t arrival_rng;
   uint32_t drop_rng;
   uint32_t weather_rng;
   float pink_b[7];
+  float wind_filter[2];
+  float wind_rumble[2];
+  float wind_gust;
+  float wind_gust_target;
+  float wind_air_alpha;
+  float wind_gust_alpha;
+  float wind_brightness_cache;
+  float wind_gust_rate_cache;
+  uint32_t wind_gust_samples;
   uint32_t hum_sample;
   float hum_table[882];
   noise_drop_voice voices[NOISE_MAX_DROPLETS];

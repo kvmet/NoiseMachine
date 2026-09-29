@@ -25,8 +25,8 @@ formula below requires Pa when the other inputs use SI units.
 ## Ambient layers
 
 `ambient_gain` contains an independent linear gain for white noise, pink
-noise, 50 Hz hum, and 60 Hz hum. Each can be zero or combined with others.
-Ambient audio is identical in both channels.
+noise, 50 Hz hum, 60 Hz hum, and wind. Each can be zero or combined with
+others. Every ambient layer except wind is identical in both channels.
 
 White noise maps the upper 24 bits of a xorshift32 stream to the interval
 [-1, 1). Pink noise uses the existing Paul Kellet seven-state filter, with
@@ -42,6 +42,15 @@ where f is 50 or 60 Hz. Harmonic weights are sound design choices. A table
 contains one 882-sample period at 50 Hz. The 60 Hz oscillator interpolates
 that table over its 735-sample period. An integer counter repeats after
 4410 samples, the common period of both signals, without phase drift.
+
+Wind starts with one common and two independent white-noise streams. Stereo
+width crossfades each channel between the common and its independent stream.
+A one-pole filter sets brightness from a 400 Hz cutoff at zero to 8 kHz at
+one. A second 120 Hz one-pole filter adds low-frequency movement. Gusts move
+between random amplitude targets. Gust rate sets both the target interval and
+the smoothing rate; gust depth blends between constant and modulated amplitude.
+Wind uses a separate random stream, so enabling it does not change rain or the
+other ambient layers.
 
 ## Rain arrivals and size distribution
 
@@ -78,7 +87,7 @@ uniform sampling within bins are implementation choices.
 Each arrival independently samples a material using `surface_weight`.
 Weights need not sum to one. The defaults are water 0.37, dirt 0.21,
 leaf 0.26, concrete 0.15, glass 0.005, and metal 0.005.
-Plastic, asphalt, tin-roof, and asphalt-roof weights default to zero.
+Plastic, asphalt, and asphalt-roof weights default to zero.
 
 The azimuth is uniform over a circle. Radial distance is
 
@@ -172,21 +181,18 @@ The second mode has half the first mode's amplitude:
 - Plastic: (220, 110), (650, 220), resonance 0.65, impact 0.50.
 - Asphalt: (300, 1600), (900, 2600), resonance 0.25, impact 0.30.
 - Asphalt roof: (140, 300), (420, 700), resonance 0.40, impact 0.25.
-- Tin roof: (320, 120), (730, 170), (1650, 260), and (3100, 420), with
-  relative amplitudes 0.38, 0.27, 0.18, and 0.10 and impact 0.35.
 
-Each ordinary solid impact multiplies both frequencies by one uniform factor
-between 0.85 and 1.15. Each tin-roof mode samples its own factor in that range,
-which varies the panel response from drop to drop. The presets represent
-different resonant responses, but are not measured material constants or
-solutions for a particular object shape. Dry surfaces do not produce bubble
-modes. Wet solids and puddle formation are not modeled.
+Each solid impact multiplies both frequencies by one uniform factor between
+0.85 and 1.15. The presets represent different resonant responses, but are not
+measured material constants or solutions for a particular object shape. Dry
+surfaces do not produce bubble modes. Wet solids and puddle formation are not
+modeled.
 
-Plastic, tin-roof, and asphalt-roof sources then pass through two cascaded
-one-pole low-pass filters at 1600 Hz, 2500 Hz, and 900 Hz respectively. The
-roof filters represent sound transmitted through the roof and ceiling to an
-indoor listener. The asphalt surface has no transmission filter and preserves
-the former asphalt-roof preset.
+Plastic and asphalt-roof sources then pass through two cascaded one-pole
+low-pass filters at 1600 Hz and 900 Hz respectively. The asphalt-roof filter
+represents sound transmitted through the roof and ceiling to an indoor
+listener. The asphalt surface has no transmission filter and preserves the
+former asphalt-roof preset.
 
 [3] demonstrates a finite-difference metal-bar model. This implementation
 uses a small modal approximation to keep work bounded on ESP32, not that
@@ -390,7 +396,7 @@ modulation around their base setting at intensity 0.5. Distance and fall height
 use the same rule in logarithmic space.
 
 Surface modulation multiplies each base weight by `1 + amount × (2I-1)`, with a
-0.001 floor, then normalizes all ten effective weights. The floor keeps a valid
+0.001 floor, then normalizes all nine effective weights. The floor keeps a valid
 distribution when every route reaches its negative extreme. A zero base weight
 remains zero.
 
@@ -419,6 +425,8 @@ Do not call it concurrently with rendering.
 Configuration ranges are:
 
 - Ambient, rain, master, and reverb gains: 0 to 1 each.
+- Wind brightness, gust depth, and stereo width: 0 to 1. Gust rate: 0.01 to
+  2 Hz.
 - Initial, minimum, and maximum rain intensity: 0 to 1; minimum must not
   exceed maximum. Initial intensity must lie within bounds when varying.
 - `vary_rain`: 0 or 1.
@@ -434,7 +442,7 @@ Configuration ranges are:
   ordered.
 - Weather modulation amounts: -1 to 1 each.
 
-Four separate random streams drive ambient samples, arrivals, drop
+Five separate random streams drive ambient samples, wind, arrivals, drop
 properties, and weather. Enabling ambient sound cannot change the rain
 sequence. Seed zero aliases seed one. Results repeat for the same build,
 configuration, and seed, independent of fill size. Floating-point and
@@ -450,7 +458,7 @@ and peak voice count.
 ## ESP32 and validation
 
 The sample rate, channel count, and pool size are compile-time constants.
-The engine occupies 63,408 bytes with the tested host ABI, plus 1,024
+The engine occupies 56,808 bytes with the tested host ABI, plus 1,024
 bytes for a 256-frame PCM buffer. Confirm `sizeof(noise_gen)` on the
 target ABI. Keep the generator in static storage, not a small task stack. Buffers are
 caller-owned. Trigonometry, exponentials, and square roots for drops run
@@ -470,7 +478,7 @@ temporary directory using the system C/C++ compilers, without adding
 project dependencies. Checks cover analytic bubble frequency and decay,
 hum fundamentals and harmonics, spectral slopes, rain count statistics,
 weather bounds, voice exhaustion and recycling, silence, block-size
-independence, malformed CLI values, WAV headers, all ten surfaces, and
+independence, malformed CLI values, WAV headers, all nine surfaces, and
 linking the sketch against the C engine. Spatial checks cover rendered
 phase, ear symmetry, head shelf gain, width bypass, distance gain,
 reverb-send independence, rear filtering, and maximum delay bounds.
