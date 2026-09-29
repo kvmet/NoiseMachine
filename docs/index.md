@@ -556,6 +556,8 @@ before calling `noise_init`. Configuration is copied into the engine.
 A successful initialization resets all voices, random streams, filters,
 and delay lines. Invalid configuration returns `NOISE_INVALID_CONFIG`
 and leaves the engine unchanged. Do not render an uninitialized engine.
+`noise_config_valid` applies the same check without an engine, so a
+control thread can reject a configuration before handing it to audio.
 
 `noise_fill` takes a count of stereo frames, writes twice that many
 interleaved int16 samples, and returns the frame count. A zero-frame call

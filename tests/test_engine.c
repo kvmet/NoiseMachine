@@ -6,9 +6,12 @@
 
 static void test_validation(void) {
   noise_config c = silent_config();
+  assert(noise_config_valid(&c));
   assert(noise_init(&a, &c, 1) == NOISE_OK);
   b = a;
   c.master_gain = NAN;
+  assert(!noise_config_valid(&c));
+  assert(!noise_config_valid(NULL));
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   assert(memcmp(&a, &b, sizeof(a)) == 0);
   c = silent_config();

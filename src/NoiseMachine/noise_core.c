@@ -5,7 +5,7 @@
 
 #include "noise_internal.h"
 
-static int config_valid(const noise_config *c) {
+int noise_config_valid(const noise_config *c) {
   if (!c || !in_range(c->master_gain, 0.0f, 1.0f) || !in_range(c->reverb_gain, 0.0f, 1.0f)) {
     return 0;
   }
@@ -48,7 +48,7 @@ static void configure(noise_gen *gen, const noise_config *previous) {
 }
 
 noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t seed) {
-  if (!gen || !config_valid(config)) return NOISE_INVALID_CONFIG;
+  if (!gen || !noise_config_valid(config)) return NOISE_INVALID_CONFIG;
   noise_config copy = *config;
   memset(gen, 0, sizeof(*gen));
   gen->config = copy;
@@ -66,7 +66,7 @@ noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t see
 }
 
 noise_result noise_set_config(noise_gen *gen, const noise_config *config) {
-  if (!gen || !config_valid(config)) return NOISE_INVALID_CONFIG;
+  if (!gen || !noise_config_valid(config)) return NOISE_INVALID_CONFIG;
   noise_config previous = gen->config;
   gen->config = *config;
   configure(gen, &previous);

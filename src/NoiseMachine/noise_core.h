@@ -48,6 +48,8 @@ typedef struct noise_gen {
 } noise_gen;
 
 void noise_config_default(noise_config *config);
+/* Returns 1 when noise_init and noise_set_config would accept config. */
+int noise_config_valid(const noise_config *config);
 /* Rejects invalid values without modifying gen. Seed zero aliases seed one. */
 noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t seed);
 /* Applies a new configuration while playing, keeping voices and random streams.
