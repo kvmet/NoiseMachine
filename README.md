@@ -66,13 +66,15 @@ make -C host gui
 ```
 
 Press **Start** for continuous playback. The Mixer, Wind, Insects, Thunder,
-Rain, Water, Weather Mod, and Spatial tabs expose the main `noise_config` fields.
+Rain, Impact, Bubbles, Weather Mod, and Spatial tabs expose every field in
+`noise_config`.
 **Strike** on the Thunder tab starts one strike at a random position within
 the distance range. **Export…** renders the current settings to an AAC `.m4a`
 file of a chosen length.
 Wind has gain, brightness, gust depth, gust rate, and stereo width controls.
-Crickets and cicadas have separate activity, pitch, texture, and stereo controls. Water controls the water slot's
-click gain, bubble probability, radius, gain, and decay ranges. Weather Mod
+Crickets and cicadas have separate activity, pitch, texture, and stereo controls. The Rain tab sets each of the nine
+surface slots from a preset and sets its share of arrivals. Impact and Bubbles edit
+every modeling parameter of the selected slot, so presets are starting points. Weather Mod
 routes intensity to density, size, gain, reverb, physical, and surface
 parameters with bipolar attenuverters. Type an exact value or use a slider;
 wide physical ranges use logarithmic sliders. Changes apply while audio plays.

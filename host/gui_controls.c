@@ -6,24 +6,36 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FIELD(member) offsetof(noise_config, member)
+#define FIELD(member) GUI_SCOPE_CONFIG, offsetof(noise_config, member)
+#define SURFACE(member) GUI_SCOPE_SURFACE, offsetof(noise_surface, member)
+#define LINEAR_IN(label, field, minimum, maximum, format) \
+  {label, field, minimum, maximum, 0.0f, GUI_SCALE_LINEAR, 1.0f, format}
+#define LOG_IN(label, field, minimum, maximum, format) \
+  {label, field, minimum, maximum, 0.0f, GUI_SCALE_LOG, 1.0f, format}
 #define LINEAR(label, member, minimum, maximum, format) \
-  {label, FIELD(member), minimum, maximum, GUI_SCALE_LINEAR, 1.0f, format}
+  LINEAR_IN(label, FIELD(member), minimum, maximum, format)
 #define LOG(label, member, minimum, maximum, format) \
-  {label, FIELD(member), minimum, maximum, GUI_SCALE_LOG, 1.0f, format}
+  LOG_IN(label, FIELD(member), minimum, maximum, format)
 #define GAIN(label, member) LINEAR(label, member, 0.0f, 1.0f, "%.2f")
-#define WEIGHT(label, slot) \
-  {label, FIELD(rain.surface[slot].weight), 0.0f, 1.0f, GUI_SCALE_WEIGHT, 1.0f, "%.6g"}
+/* The weight slider spans 1e-7 to 1; its bottom position means zero. */
+#define WEIGHT(slot) \
+  [CONTROL_SURFACE_WEIGHT + slot] = {"Weight", FIELD(rain.surface[slot].weight), \
+                                     0.0f, 1.0f, 1e-7f, GUI_SCALE_LOG_OFF, 1.0f, "%.6g"}
 #define MOD(label, route) LINEAR(label, weather.mod_amount[route], -1.0f, 1.0f, "%.2f")
 #define SURFACE_MOD(label, slot) \
   [CONTROL_WEATHER_MOD + WEATHER_MOD_SURFACE_WEIGHT + slot] = \
       MOD(label, WEATHER_MOD_SURFACE_WEIGHT + slot)
+#define MODE(number, index) \
+  [CONTROL_MODE_##number##_FREQUENCY] = LOG_IN("Mode " #number " frequency (Hz)", \
+      SURFACE(mode[index].frequency_hz), 20.0f, 20000.0f, "%.0f"), \
+  [CONTROL_MODE_##number##_DAMPING] = LOG_IN("Mode " #number " damping (/s)", \
+      SURFACE(mode[index].damping_per_s), 1.0f, 20000.0f, "%.0f"), \
+  [CONTROL_MODE_##number##_GAIN] = LINEAR_IN("Mode " #number " gain", \
+      SURFACE(mode[index].gain), 0.0f, 4.0f, "%.3f")
 /* Bubble radii are stored in metres and shown in millimetres. */
 #define RADIUS(label, member) \
-  {label, FIELD(member), 0.00016f, 0.004f, GUI_SCALE_LOG, 1000.0f, "%.2f"}
+  {label, SURFACE(member), 0.00016f, 0.004f, 0.0f, GUI_SCALE_LOG, 1000.0f, "%.2f"}
 
-/* The weight slider spans 1e-7 to 1; its bottom position means zero. */
-#define WEIGHT_FLOOR_LOG10 (-7.0)
 /* Weight given to the last nonzero surface when the user zeroes it. */
 #define WEIGHT_KEPT 0.001f
 
@@ -92,34 +104,38 @@ const gui_control gui_controls[CONTROL_COUNT] = {
   [CONTROL_RAIN_MAX_DISTANCE] = LOG("Maximum distance (m)", rain.max_distance_m,
                                     0.25f, 100.0f, "%.3f"),
 
-  [CONTROL_SURFACE_WEIGHT + WATER] = WEIGHT("Water", WATER),
-  [CONTROL_SURFACE_WEIGHT + DIRT] = WEIGHT("Dirt", DIRT),
-  [CONTROL_SURFACE_WEIGHT + LEAF] = WEIGHT("Leaf", LEAF),
-  [CONTROL_SURFACE_WEIGHT + CONCRETE] = WEIGHT("Concrete", CONCRETE),
-  [CONTROL_SURFACE_WEIGHT + GLASS] = WEIGHT("Glass", GLASS),
-  [CONTROL_SURFACE_WEIGHT + METAL] = WEIGHT("Metal", METAL),
-  [CONTROL_SURFACE_WEIGHT + PLASTIC] = WEIGHT("Plastic", PLASTIC),
-  [CONTROL_SURFACE_WEIGHT + ASPHALT] = WEIGHT("Asphalt", ASPHALT),
-  [CONTROL_SURFACE_WEIGHT + ASPHALT_ROOF] = WEIGHT("Asphalt roof", ASPHALT_ROOF),
+  WEIGHT(0), WEIGHT(1), WEIGHT(2), WEIGHT(3), WEIGHT(4),
+  WEIGHT(5), WEIGHT(6), WEIGHT(7), WEIGHT(8),
 
-  [CONTROL_WATER_IMPACT_MIN] = LINEAR("Impact gain minimum", rain.surface[WATER].click_gain_min,
-                                      0.0f, 2.0f, "%.2f"),
-  [CONTROL_WATER_IMPACT_MAX] = LINEAR("Impact gain maximum", rain.surface[WATER].click_gain_max,
-                                      0.0f, 2.0f, "%.2f"),
-  [CONTROL_WATER_BUBBLE_PROBABILITY] = GAIN("Bubble probability",
-                                            rain.surface[WATER].bubble_probability),
-  [CONTROL_WATER_BUBBLE_RADIUS_MIN] = RADIUS("Bubble radius min (mm)",
-                                             rain.surface[WATER].bubble_radius_min_m),
-  [CONTROL_WATER_BUBBLE_RADIUS_MAX] = RADIUS("Bubble radius max (mm)",
-                                             rain.surface[WATER].bubble_radius_max_m),
-  [CONTROL_WATER_BUBBLE_GAIN_MIN] = LINEAR("Bubble gain minimum", rain.surface[WATER].bubble_gain_min,
-                                           0.0f, 8.0f, "%.2f"),
-  [CONTROL_WATER_BUBBLE_GAIN_MAX] = LINEAR("Bubble gain maximum", rain.surface[WATER].bubble_gain_max,
-                                           0.0f, 8.0f, "%.2f"),
-  [CONTROL_WATER_BUBBLE_DECAY_MIN] = LOG("Decay scale minimum", rain.surface[WATER].bubble_decay_min,
-                                         0.25f, 20.0f, "%.2f"),
-  [CONTROL_WATER_BUBBLE_DECAY_MAX] = LOG("Decay scale maximum", rain.surface[WATER].bubble_decay_max,
-                                         0.25f, 20.0f, "%.2f"),
+  [CONTROL_CLICK_GAIN_MIN] = LINEAR_IN("Click gain minimum", SURFACE(click_gain_min),
+                                       0.0f, 2.0f, "%.2f"),
+  [CONTROL_CLICK_GAIN_MAX] = LINEAR_IN("Click gain maximum", SURFACE(click_gain_max),
+                                       0.0f, 2.0f, "%.2f"),
+  [CONTROL_CLICK_FREQUENCY_MIN] = LOG_IN("Click frequency min (Hz)",
+      SURFACE(click_frequency_min_hz), 20.0f, 20000.0f, "%.0f"),
+  [CONTROL_CLICK_FREQUENCY_MAX] = LOG_IN("Click frequency max (Hz)",
+      SURFACE(click_frequency_max_hz), 20.0f, 20000.0f, "%.0f"),
+  [CONTROL_CLICK_DAMPING] = LOG_IN("Click damping × f", SURFACE(click_damping_ratio),
+                                   0.05f, 50.0f, "%.2f"),
+  MODE(1, 0),
+  MODE(2, 1),
+  [CONTROL_DETUNE] = LINEAR_IN("Detune ±", SURFACE(detune), 0.0f, 0.5f, "%.3f"),
+  [CONTROL_LOWPASS] = {"Low-pass (Hz)", SURFACE(lowpass_hz), 0.0f, 20000.0f, 20.0f,
+                       GUI_SCALE_LOG_OFF, 1.0f, "%.0f"},
+  [CONTROL_BUBBLE_PROBABILITY] = LINEAR_IN("Bubble probability", SURFACE(bubble_probability),
+                                           0.0f, 1.0f, "%.2f"),
+  [CONTROL_BUBBLE_RADIUS_MIN] = RADIUS("Bubble radius min (mm)", bubble_radius_min_m),
+  [CONTROL_BUBBLE_RADIUS_MAX] = RADIUS("Bubble radius max (mm)", bubble_radius_max_m),
+  [CONTROL_BUBBLE_GAIN_MIN] = LINEAR_IN("Bubble gain minimum", SURFACE(bubble_gain_min),
+                                        0.0f, 8.0f, "%.2f"),
+  [CONTROL_BUBBLE_GAIN_MAX] = LINEAR_IN("Bubble gain maximum", SURFACE(bubble_gain_max),
+                                        0.0f, 8.0f, "%.2f"),
+  [CONTROL_BUBBLE_DECAY_MIN] = LOG_IN("Decay scale minimum", SURFACE(bubble_decay_min),
+                                      0.25f, 20.0f, "%.2f"),
+  [CONTROL_BUBBLE_DECAY_MAX] = LOG_IN("Decay scale maximum", SURFACE(bubble_decay_max),
+                                      0.25f, 20.0f, "%.2f"),
+  [CONTROL_BUBBLE_DELAY] = {"Bubble delay (ms)", SURFACE(bubble_delay_s), 0.0f, 0.1f, 0.0f,
+                            GUI_SCALE_LINEAR, 1000.0f, "%.1f"},
 
   [CONTROL_WEATHER_MOD + WEATHER_MOD_ARRIVAL_RATE] = MOD("Arrival density",
                                                          WEATHER_MOD_ARRIVAL_RATE),
@@ -131,15 +147,9 @@ const gui_control gui_controls[CONTROL_COUNT] = {
                                                          WEATHER_MOD_MIN_DISTANCE),
   [CONTROL_WEATHER_MOD + WEATHER_MOD_MAX_DISTANCE] = MOD("Maximum distance",
                                                          WEATHER_MOD_MAX_DISTANCE),
-  SURFACE_MOD("Water", WATER),
-  SURFACE_MOD("Dirt", DIRT),
-  SURFACE_MOD("Leaf", LEAF),
-  SURFACE_MOD("Concrete", CONCRETE),
-  SURFACE_MOD("Glass", GLASS),
-  SURFACE_MOD("Metal", METAL),
-  SURFACE_MOD("Plastic", PLASTIC),
-  SURFACE_MOD("Asphalt", ASPHALT),
-  SURFACE_MOD("Asphalt roof", ASPHALT_ROOF),
+  SURFACE_MOD("Surface 1", 0), SURFACE_MOD("Surface 2", 1), SURFACE_MOD("Surface 3", 2),
+  SURFACE_MOD("Surface 4", 3), SURFACE_MOD("Surface 5", 4), SURFACE_MOD("Surface 6", 5),
+  SURFACE_MOD("Surface 7", 6), SURFACE_MOD("Surface 8", 7), SURFACE_MOD("Surface 9", 8),
 };
 
 /* Each lower bound stays at or below its upper bound. */
@@ -149,10 +159,11 @@ static const gui_control_id bound_pairs[][2] = {
   {CONTROL_CRICKET_MIN_DISTANCE, CONTROL_CRICKET_MAX_DISTANCE},
   {CONTROL_CICADA_MIN_DISTANCE, CONTROL_CICADA_MAX_DISTANCE},
   {CONTROL_THUNDER_MIN_DISTANCE, CONTROL_THUNDER_MAX_DISTANCE},
-  {CONTROL_WATER_IMPACT_MIN, CONTROL_WATER_IMPACT_MAX},
-  {CONTROL_WATER_BUBBLE_RADIUS_MIN, CONTROL_WATER_BUBBLE_RADIUS_MAX},
-  {CONTROL_WATER_BUBBLE_GAIN_MIN, CONTROL_WATER_BUBBLE_GAIN_MAX},
-  {CONTROL_WATER_BUBBLE_DECAY_MIN, CONTROL_WATER_BUBBLE_DECAY_MAX},
+  {CONTROL_CLICK_GAIN_MIN, CONTROL_CLICK_GAIN_MAX},
+  {CONTROL_CLICK_FREQUENCY_MIN, CONTROL_CLICK_FREQUENCY_MAX},
+  {CONTROL_BUBBLE_RADIUS_MIN, CONTROL_BUBBLE_RADIUS_MAX},
+  {CONTROL_BUBBLE_GAIN_MIN, CONTROL_BUBBLE_GAIN_MAX},
+  {CONTROL_BUBBLE_DECAY_MIN, CONTROL_BUBBLE_DECAY_MAX},
 };
 
 void gui_startup_config(noise_config *c) {
@@ -206,12 +217,18 @@ void gui_startup_config(noise_config *c) {
   c->rain.surface[WATER].bubble_decay_max = 0.58f;
 }
 
-static float *field(noise_config *config, gui_control_id id) {
-  return (float *)((char *)config + gui_controls[id].offset);
+static float *field(noise_config *config, unsigned slot, gui_control_id id) {
+  const gui_control *control = &gui_controls[id];
+  char *base = control->scope == GUI_SCOPE_SURFACE ? (char *)&config->rain.surface[slot] :
+                                                     (char *)config;
+  return (float *)(base + control->offset);
 }
 
-float gui_control_get(const noise_config *config, gui_control_id id) {
-  return *(const float *)((const char *)config + gui_controls[id].offset);
+float gui_control_get(const noise_config *config, unsigned slot, gui_control_id id) {
+  const gui_control *control = &gui_controls[id];
+  const char *base = control->scope == GUI_SCOPE_SURFACE ?
+      (const char *)&config->rain.surface[slot] : (const char *)config;
+  return *(const float *)(base + control->offset);
 }
 
 static void clamp_intensity(noise_config *c) {
@@ -228,19 +245,27 @@ static int only_nonzero_surface(const noise_config *c, unsigned surface) {
   return 1;
 }
 
-const char *gui_control_set(noise_config *config, gui_control_id id, float value) {
-  const gui_control *control = &gui_controls[id];
+static float clamp(const gui_control *control, float value) {
   value = fminf(control->maximum, fmaxf(control->minimum, value));
+  if (control->scale == GUI_SCALE_LOG_OFF && value > 0.0f) {
+    value = fmaxf(control->smallest, value);
+  }
+  return value;
+}
+
+const char *gui_control_set(noise_config *config, unsigned slot, gui_control_id id,
+                            float value) {
+  value = clamp(&gui_controls[id], value);
   const char *note = NULL;
   if (id >= CONTROL_SURFACE_WEIGHT && id < CONTROL_SURFACE_WEIGHT + NOISE_SURFACE_SLOTS &&
       value == 0.0f && only_nonzero_surface(config, id - CONTROL_SURFACE_WEIGHT)) {
     value = WEIGHT_KEPT;
     note = "At least one surface weight must be above zero";
   }
-  *field(config, id) = value;
+  *field(config, slot, id) = value;
   for (size_t i = 0; i < sizeof(bound_pairs) / sizeof(bound_pairs[0]); ++i) {
-    float *lower = field(config, bound_pairs[i][0]);
-    float *upper = field(config, bound_pairs[i][1]);
+    float *lower = field(config, slot, bound_pairs[i][0]);
+    float *upper = field(config, slot, bound_pairs[i][1]);
     if (id == bound_pairs[i][0] && *upper < value) *upper = value;
     if (id == bound_pairs[i][1] && *lower > value) *lower = value;
   }
@@ -255,21 +280,18 @@ void gui_set_vary(noise_config *config, int vary) {
 
 void gui_slider_range(gui_control_id id, double *minimum, double *maximum) {
   const gui_control *control = &gui_controls[id];
-  if (control->scale == GUI_SCALE_WEIGHT) {
-    *minimum = WEIGHT_FLOOR_LOG10;
-    *maximum = log10(control->maximum);
-  } else {
-    *minimum = gui_slider_position(id, control->minimum);
-    *maximum = gui_slider_position(id, control->maximum);
-  }
+  *minimum = control->scale == GUI_SCALE_LOG_OFF ? log(control->smallest) :
+                                                   gui_slider_position(id, control->minimum);
+  *maximum = gui_slider_position(id, control->maximum);
 }
 
 double gui_slider_position(gui_control_id id, float value) {
-  switch (gui_controls[id].scale) {
+  const gui_control *control = &gui_controls[id];
+  switch (control->scale) {
     case GUI_SCALE_LOG:
       return log(value);
-    case GUI_SCALE_WEIGHT:
-      return value > 0.0f ? fmax(WEIGHT_FLOOR_LOG10, log10(value)) : WEIGHT_FLOOR_LOG10;
+    case GUI_SCALE_LOG_OFF:
+      return log(fmaxf(control->smallest, value));
     case GUI_SCALE_LINEAR:
       break;
   }
@@ -277,11 +299,12 @@ double gui_slider_position(gui_control_id id, float value) {
 }
 
 float gui_slider_value(gui_control_id id, double position) {
-  switch (gui_controls[id].scale) {
+  const gui_control *control = &gui_controls[id];
+  switch (control->scale) {
     case GUI_SCALE_LOG:
       return (float)exp(position);
-    case GUI_SCALE_WEIGHT:
-      return position <= WEIGHT_FLOOR_LOG10 ? 0.0f : (float)pow(10.0, position);
+    case GUI_SCALE_LOG_OFF:
+      return position <= log(control->smallest) ? 0.0f : (float)exp(position);
     case GUI_SCALE_LINEAR:
       break;
   }

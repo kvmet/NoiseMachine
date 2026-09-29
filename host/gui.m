@@ -22,8 +22,16 @@
   NSSlider *_sliders[CONTROL_COUNT];
   NSTextField *_valueFields[CONTROL_COUNT];
   noise_config _config; /* The settings shown; published whole to _output on each edit. */
+  unsigned _slot;       /* Surface slot shown by GUI_SCOPE_SURFACE controls. */
+  NSMutableArray<NSSegmentedControl *> *_slotPickers;
   audio_output *_output;
   BOOL _playing;
+}
+
+/* In surface_preset order. */
+static NSArray<NSString *> *preset_names(void) {
+  return @[@"Water", @"Dirt", @"Leaf", @"Concrete", @"Glass", @"Metal", @"Plastic",
+           @"Asphalt", @"Asphalt roof"];
 }
 
 - (void)publishConfig {
@@ -35,12 +43,13 @@
 
 - (NSString *)formattedControl:(gui_control_id)control {
   char text[32];
-  gui_control_format(control, gui_control_get(&_config, control), text, sizeof(text));
+  gui_control_format(control, gui_control_get(&_config, _slot, control), text, sizeof(text));
   return @(text);
 }
 
 - (void)showControl:(gui_control_id)control {
-  _sliders[control].doubleValue = gui_slider_position(control, gui_control_get(&_config, control));
+  float value = gui_control_get(&_config, _slot, control);
+  _sliders[control].doubleValue = gui_slider_position(control, value);
   _valueFields[control].stringValue = [self formattedControl:control];
 }
 
@@ -49,26 +58,43 @@
 - (void)showChangesFrom:(const noise_config *)previous edited:(gui_control_id)edited {
   for (gui_control_id control = 0; control < CONTROL_COUNT; ++control) {
     if (control == edited ||
-        gui_control_get(previous, control) != gui_control_get(&_config, control)) {
+        gui_control_get(previous, _slot, control) != gui_control_get(&_config, _slot, control)) {
       [self showControl:control];
     }
   }
 }
 
+- (void)showSurfaceControls {
+  for (gui_control_id control = 0; control < CONTROL_COUNT; ++control) {
+    if (gui_controls[control].scope == GUI_SCOPE_SURFACE) [self showControl:control];
+  }
+}
+
 - (void)setControl:(gui_control_id)control value:(float)value {
   noise_config previous = _config;
-  const char *note = gui_control_set(&_config, control, value);
+  const char *note = gui_control_set(&_config, _slot, control, value);
   if (note) _statusLabel.stringValue = @(note);
   [self showChangesFrom:&previous edited:control];
   [self publishConfig];
 }
 
-- (NSView *)row:(gui_control_id)control {
-  const gui_control *info = &gui_controls[control];
-  NSTextField *label = [NSTextField labelWithString:@(info->label)];
+- (NSTextField *)rowLabel:(NSString *)text width:(CGFloat)width {
+  NSTextField *label = [NSTextField labelWithString:text];
   label.alignment = NSTextAlignmentRight;
-  [label.widthAnchor constraintEqualToConstant:145.0].active = YES;
+  [label.widthAnchor constraintEqualToConstant:width].active = YES;
+  return label;
+}
 
+- (NSStackView *)rowWithViews:(NSArray<NSView *> *)views {
+  NSStackView *row = [NSStackView stackViewWithViews:views];
+  row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+  row.alignment = NSLayoutAttributeCenterY;
+  row.spacing = 10.0;
+  return row;
+}
+
+- (NSArray<NSView *> *)sliderAndField:(gui_control_id)control width:(CGFloat)width {
+  const gui_control *info = &gui_controls[control];
   double minimum, maximum;
   gui_slider_range(control, &minimum, &maximum);
   NSSlider *slider = [NSSlider sliderWithValue:minimum minValue:minimum maxValue:maximum
@@ -79,7 +105,7 @@
     slider.numberOfTickMarks = 3;
     slider.allowsTickMarkValuesOnly = NO;
   }
-  [slider.widthAnchor constraintEqualToConstant:280.0].active = YES;
+  [slider.widthAnchor constraintEqualToConstant:width].active = YES;
   _sliders[control] = slider;
 
   NSTextField *field = [[NSTextField alloc] initWithFrame:NSZeroRect];
@@ -91,16 +117,18 @@
   field.delegate = self;
   field.tag = control;
   /* %.6g weights such as 6.05624e-05 need 11 characters. */
-  BOOL wide = info->scale == GUI_SCALE_WEIGHT;
+  BOOL wide = info->scale == GUI_SCALE_LOG_OFF && info->smallest < 1e-3f;
   [field.widthAnchor constraintEqualToConstant:wide ? 100.0 : 72.0].active = YES;
   _valueFields[control] = field;
   [self showControl:control];
+  return @[slider, field];
+}
 
-  NSStackView *row = [NSStackView stackViewWithViews:@[label, slider, field]];
-  row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-  row.alignment = NSLayoutAttributeCenterY;
-  row.spacing = 10.0;
-  return row;
+- (NSView *)row:(gui_control_id)control {
+  NSMutableArray<NSView *> *views = [NSMutableArray arrayWithObject:
+      [self rowLabel:@(gui_controls[control].label) width:145.0]];
+  [views addObjectsFromArray:[self sliderAndField:control width:280.0]];
+  return [self rowWithViews:views];
 }
 
 - (NSArray<NSView *> *)rowsFrom:(gui_control_id)first count:(unsigned)count {
@@ -128,6 +156,19 @@
 - (void)controlTextDidEndEditing:(NSNotification *)notification {
   NSTextField *field = notification.object;
   if (field.tag >= 0 && field.tag < CONTROL_COUNT) [self valueFieldChanged:field];
+}
+
+- (void)slotChanged:(NSSegmentedControl *)sender {
+  _slot = (unsigned)sender.selectedSegment;
+  for (NSSegmentedControl *picker in _slotPickers) picker.selectedSegment = _slot;
+  [self showSurfaceControls];
+}
+
+- (void)presetChanged:(NSPopUpButton *)sender {
+  unsigned slot = (unsigned)sender.tag;
+  noise_surface_preset(&_config.rain.surface[slot], (surface_preset)sender.indexOfSelectedItem);
+  if (slot == _slot) [self showSurfaceControls];
+  [self publishConfig];
 }
 
 - (void)cicadaSpeciesChanged:(NSPopUpButton *)sender {
@@ -268,6 +309,34 @@
   return view;
 }
 
+- (NSView *)surfaceRow:(unsigned)slot {
+  NSTextField *label = [self rowLabel:[NSString stringWithFormat:@"Surface %u", slot + 1]
+                                width:70.0];
+  NSPopUpButton *menu = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+  [menu addItemsWithTitles:preset_names()];
+  [menu selectItemAtIndex:slot];
+  menu.tag = slot;
+  menu.target = self;
+  menu.action = @selector(presetChanged:);
+  [menu.widthAnchor constraintEqualToConstant:130.0].active = YES;
+  NSMutableArray<NSView *> *views = [NSMutableArray arrayWithObjects:label, menu, nil];
+  [views addObjectsFromArray:[self sliderAndField:CONTROL_SURFACE_WEIGHT + slot width:170.0]];
+  return [self rowWithViews:views];
+}
+
+- (NSView *)slotPicker {
+  NSMutableArray<NSString *> *labels = [NSMutableArray array];
+  for (unsigned slot = 0; slot < NOISE_SURFACE_SLOTS; ++slot) {
+    [labels addObject:[NSString stringWithFormat:@"%u", slot + 1]];
+  }
+  NSSegmentedControl *picker = [NSSegmentedControl
+      segmentedControlWithLabels:labels trackingMode:NSSegmentSwitchTrackingSelectOne
+                          target:self action:@selector(slotChanged:)];
+  picker.selectedSegment = _slot;
+  [_slotPickers addObject:picker];
+  return [self rowWithViews:@[[self rowLabel:@"Surface" width:145.0], picker]];
+}
+
 - (NSView *)cicadaSpeciesRow {
   NSTextField *label = [NSTextField labelWithString:@"Species"];
   label.alignment = NSTextAlignmentRight;
@@ -333,20 +402,31 @@
   [rainRows addObjectsFromArray:[self rowsFrom:CONTROL_RAIN_INTENSITY count:5]];
   [rainRows addObject:[self row:CONTROL_DROP_RATE]];
   [rainRows addObject:[self row:CONTROL_FALL_HEIGHT]];
-  [rainRows addObject:[self sectionLabel:@"Surface weights"]];
-  [rainRows addObjectsFromArray:[self rowsFrom:CONTROL_SURFACE_WEIGHT count:NOISE_SURFACE_SLOTS]];
+  [rainRows addObject:[self sectionLabel:@"Surfaces: preset and share of arrivals"]];
+  for (unsigned slot = 0; slot < NOISE_SURFACE_SLOTS; ++slot) {
+    [rainRows addObject:[self surfaceRow:slot]];
+  }
   [rainRows addObject:[self seedRow]];
   NSView *rain = [self tabViewWithRows:rainRows];
 
-  NSMutableArray<NSView *> *waterRows = [NSMutableArray arrayWithObject:
-      [self sectionLabel:@"Random range per water drop"]];
-  [waterRows addObjectsFromArray:[self rowsFrom:CONTROL_WATER_IMPACT_MIN count:9]];
-  NSView *water = [self tabViewWithRows:waterRows];
+  _slotPickers = [NSMutableArray array];
+  NSMutableArray<NSView *> *impactRows = [NSMutableArray arrayWithObjects:
+      [self slotPicker], [self sectionLabel:@"Click"], nil];
+  [impactRows addObjectsFromArray:[self rowsFrom:CONTROL_CLICK_GAIN_MIN count:5]];
+  [impactRows addObject:[self sectionLabel:@"Resonances"]];
+  [impactRows addObjectsFromArray:[self rowsFrom:CONTROL_MODE_1_FREQUENCY count:8]];
+  NSView *impact = [self tabViewWithRows:impactRows];
+
+  NSMutableArray<NSView *> *bubbleRows = [NSMutableArray arrayWithObjects:
+      [self slotPicker], [self sectionLabel:@"Random range per bubble"], nil];
+  [bubbleRows addObjectsFromArray:[self rowsFrom:CONTROL_BUBBLE_PROBABILITY count:8]];
+  NSView *bubbles = [self tabViewWithRows:bubbleRows];
 
   NSMutableArray<NSView *> *modRows = [NSMutableArray arrayWithObjects:
       [self sectionLabel:@"Weather intensity attenuverters"],
       [NSTextField labelWithString:@"+ follows intensity     0 disconnects     - inverts"], nil];
-  [modRows addObjectsFromArray:[self rowsFrom:CONTROL_WEATHER_MOD count:WEATHER_MOD_SURFACE_WEIGHT]];
+  [modRows addObjectsFromArray:[self rowsFrom:CONTROL_WEATHER_MOD
+                                        count:WEATHER_MOD_SURFACE_WEIGHT]];
   [modRows addObject:[self sectionLabel:@"Surface weights"]];
   [modRows addObjectsFromArray:[self rowsFrom:CONTROL_WEATHER_MOD + WEATHER_MOD_SURFACE_WEIGHT
                                         count:NOISE_SURFACE_SLOTS]];
@@ -360,7 +440,8 @@
 
   NSTabView *tabs = [[NSTabView alloc] initWithFrame:NSZeroRect];
   for (NSArray *item in @[@[@"Mixer", mixer], @[@"Wind", wind], @[@"Insects", insects],
-                           @[@"Thunder", thunder], @[@"Rain", rain], @[@"Water", water],
+                           @[@"Thunder", thunder], @[@"Rain", rain], @[@"Impact", impact],
+                           @[@"Bubbles", bubbles],
                            @[@"Weather Mod", weatherMod], @[@"Spatial", spatial]]) {
     NSTabViewItem *tab = [[NSTabViewItem alloc] initWithIdentifier:item[0]];
     tab.label = item[0];

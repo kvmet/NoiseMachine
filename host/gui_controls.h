@@ -52,15 +52,28 @@ typedef enum gui_control_id {
   CONTROL_RAIN_MIN_DISTANCE,
   CONTROL_RAIN_MAX_DISTANCE,
   CONTROL_SURFACE_WEIGHT,
-  CONTROL_WATER_IMPACT_MIN = CONTROL_SURFACE_WEIGHT + NOISE_SURFACE_SLOTS,
-  CONTROL_WATER_IMPACT_MAX,
-  CONTROL_WATER_BUBBLE_PROBABILITY,
-  CONTROL_WATER_BUBBLE_RADIUS_MIN,
-  CONTROL_WATER_BUBBLE_RADIUS_MAX,
-  CONTROL_WATER_BUBBLE_GAIN_MIN,
-  CONTROL_WATER_BUBBLE_GAIN_MAX,
-  CONTROL_WATER_BUBBLE_DECAY_MIN,
-  CONTROL_WATER_BUBBLE_DECAY_MAX,
+  /* Fields of the selected surface slot. */
+  CONTROL_CLICK_GAIN_MIN = CONTROL_SURFACE_WEIGHT + NOISE_SURFACE_SLOTS,
+  CONTROL_CLICK_GAIN_MAX,
+  CONTROL_CLICK_FREQUENCY_MIN,
+  CONTROL_CLICK_FREQUENCY_MAX,
+  CONTROL_CLICK_DAMPING,
+  CONTROL_MODE_1_FREQUENCY,
+  CONTROL_MODE_1_DAMPING,
+  CONTROL_MODE_1_GAIN,
+  CONTROL_MODE_2_FREQUENCY,
+  CONTROL_MODE_2_DAMPING,
+  CONTROL_MODE_2_GAIN,
+  CONTROL_DETUNE,
+  CONTROL_LOWPASS,
+  CONTROL_BUBBLE_PROBABILITY,
+  CONTROL_BUBBLE_RADIUS_MIN,
+  CONTROL_BUBBLE_RADIUS_MAX,
+  CONTROL_BUBBLE_GAIN_MIN,
+  CONTROL_BUBBLE_GAIN_MAX,
+  CONTROL_BUBBLE_DECAY_MIN,
+  CONTROL_BUBBLE_DECAY_MAX,
+  CONTROL_BUBBLE_DELAY,
   CONTROL_WEATHER_MOD,
   CONTROL_COUNT = CONTROL_WEATHER_MOD + NOISE_WEATHER_MOD_COUNT
 } gui_control_id;
@@ -68,14 +81,21 @@ typedef enum gui_control_id {
 typedef enum gui_scale {
   GUI_SCALE_LINEAR,
   GUI_SCALE_LOG,
-  GUI_SCALE_WEIGHT /* log10 slider whose bottom position means zero. */
+  GUI_SCALE_LOG_OFF /* Log slider from smallest to maximum whose bottom position means zero. */
 } gui_scale;
+
+typedef enum gui_scope {
+  GUI_SCOPE_CONFIG,  /* offset is into noise_config. */
+  GUI_SCOPE_SURFACE  /* offset is into the selected slot's noise_surface. */
+} gui_scope;
 
 typedef struct gui_control {
   const char *label;
-  size_t offset;        /* Float field in noise_config. */
+  gui_scope scope;
+  size_t offset;        /* Float field. */
   float minimum;        /* Range in config units, inside what the engine accepts. */
   float maximum;
+  float smallest;       /* GUI_SCALE_LOG_OFF only: smallest nonzero value. */
   gui_scale scale;
   float display_factor; /* Shown value is display_factor times the config value. */
   const char *format;   /* printf format for the shown value. */
@@ -86,11 +106,13 @@ extern const gui_control gui_controls[CONTROL_COUNT];
 /* Listening settings the GUI opens with; the engine keeps its own defaults. */
 void gui_startup_config(noise_config *config);
 
-float gui_control_get(const noise_config *config, gui_control_id id);
+/* slot selects the surface for GUI_SCOPE_SURFACE controls; others ignore it. */
+float gui_control_get(const noise_config *config, unsigned slot, gui_control_id id);
 /* Clamps value to the control's range, stores it, and moves any field that must
    follow so a valid config stays valid. Returns a note for the user when the
    stored value differs from the clamped request, or NULL. */
-const char *gui_control_set(noise_config *config, gui_control_id id, float value);
+const char *gui_control_set(noise_config *config, unsigned slot, gui_control_id id,
+                            float value);
 /* Turns weather variation on or off, clamping intensity into its bounds. */
 void gui_set_vary(noise_config *config, int vary);
 
