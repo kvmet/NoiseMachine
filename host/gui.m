@@ -1,81 +1,14 @@
-#import <AudioToolbox/AudioToolbox.h>
 #import <Cocoa/Cocoa.h>
 
 #include <errno.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
 
 #include "audio_output.h"
+#include "export_audio.h"
 #include "gui_controls.h"
 #include "noise_core.h"
-
-#define EXPORT_BATCH 4096u
-#define EXPORT_BIT_RATE 256000u /* Broadband noise is the hardest case for AAC. */
-
-static OSStatus export_m4a(NSURL *url, const noise_config *config, uint32_t seed,
-                           uint32_t frames, void (^progress)(uint32_t done)) {
-  noise_gen *gen = malloc(sizeof(*gen));
-  if (!gen) return kAudio_MemFullError;
-  if (noise_init(gen, config, seed) != NOISE_OK) {
-    free(gen);
-    return kAudio_ParamError;
-  }
-  AudioStreamBasicDescription aac = {
-      .mSampleRate = NOISE_SAMPLE_RATE_HZ,
-      .mFormatID = kAudioFormatMPEG4AAC,
-      .mChannelsPerFrame = NOISE_CHANNELS};
-  AudioStreamBasicDescription pcm = {
-      .mSampleRate = NOISE_SAMPLE_RATE_HZ,
-      .mFormatID = kAudioFormatLinearPCM,
-      .mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked |
-                      kAudioFormatFlagsNativeEndian,
-      .mBytesPerPacket = NOISE_CHANNELS * sizeof(int16_t),
-      .mFramesPerPacket = 1,
-      .mBytesPerFrame = NOISE_CHANNELS * sizeof(int16_t),
-      .mChannelsPerFrame = NOISE_CHANNELS,
-      .mBitsPerChannel = 16};
-  ExtAudioFileRef file = NULL;
-  OSStatus status = ExtAudioFileCreateWithURL((__bridge CFURLRef)url, kAudioFileM4AType, &aac,
-                                              NULL, kAudioFileFlags_EraseFile, &file);
-  if (status == noErr) {
-    status = ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat,
-                                     sizeof(pcm), &pcm);
-  }
-  if (status == noErr) {
-    AudioConverterRef converter = NULL;
-    UInt32 size = sizeof(converter);
-    status = ExtAudioFileGetProperty(file, kExtAudioFileProperty_AudioConverter,
-                                     &size, &converter);
-    UInt32 bitRate = EXPORT_BIT_RATE;
-    if (status == noErr) {
-      status = AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate,
-                                         sizeof(bitRate), &bitRate);
-    }
-    CFArrayRef noConfig = NULL;
-    if (status == noErr) {
-      status = ExtAudioFileSetProperty(file, kExtAudioFileProperty_ConverterConfig,
-                                       sizeof(noConfig), &noConfig);
-    }
-  }
-  static int16_t batch[EXPORT_BATCH * NOISE_CHANNELS];
-  uint32_t done = 0;
-  while (status == noErr && done < frames) {
-    uint32_t count = frames - done < EXPORT_BATCH ? frames - done : EXPORT_BATCH;
-    noise_fill(gen, batch, count);
-    AudioBufferList buffers = {1, {{NOISE_CHANNELS, count * pcm.mBytesPerFrame, batch}}};
-    status = ExtAudioFileWrite(file, count, &buffers);
-    done += count;
-    if (done % (10u * NOISE_SAMPLE_RATE_HZ) < count || done == frames) progress(done);
-  }
-  if (file) {
-    OSStatus closed = ExtAudioFileDispose(file);
-    if (status == noErr) status = closed;
-  }
-  free(gen);
-  return status;
-}
 
 @interface NoiseAppDelegate : NSObject <NSApplicationDelegate, NSTextFieldDelegate>
 @end
