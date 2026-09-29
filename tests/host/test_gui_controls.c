@@ -40,10 +40,10 @@ static void test_startup_valid(void) {
    engine and the follow rules cover every cross-field constraint. */
 static void test_every_edit_stays_valid(void) {
   static const float fractions[] = {0.0f, 1.0f, 0.5f, 0.0f, 0.0001f, 0.25f, 1.0f};
-  for (int vary = 0; vary <= 1; ++vary) {
+  for (int manual = 0; manual <= 1; ++manual) {
     noise_config c;
     gui_startup_config(&c);
-    gui_set_vary(&c, vary);
+    c.storm.manual = manual;
     assert(noise_config_valid(&c));
     for (size_t f = 0; f < sizeof(fractions) / sizeof(fractions[0]); ++f) {
       for (unsigned surface = 0; surface < c.rain.surface_count; ++surface) {
@@ -65,26 +65,18 @@ static void test_every_edit_stays_valid(void) {
 static void test_follow_rules(void) {
   noise_config c;
   gui_startup_config(&c);
-  gui_control_set(&c, 0, CONTROL_MAX_INTENSITY, 0.5f);
-  gui_control_set(&c, 0, CONTROL_MIN_INTENSITY, 0.9f);
-  assert(c.weather.max_intensity == 0.9f);
-  assert(c.weather.intensity == 0.9f);
-  gui_control_set(&c, 0, CONTROL_THUNDER_MIN_DISTANCE, 5000.0f);
-  gui_control_set(&c, 0, CONTROL_THUNDER_MAX_DISTANCE, 1000.0f);
-  assert(c.thunder.min_distance_m == 1000.0f);
-
-  gui_set_vary(&c, 0);
-  gui_control_set(&c, 0, CONTROL_RAIN_INTENSITY, 0.1f);
-  assert(c.weather.intensity == 0.1f);
-  gui_set_vary(&c, 1);
-  assert(c.weather.intensity == c.weather.min_intensity);
+  gui_control_set(&c, 0, CONTROL_STORM_MAX_SEVERITY, 0.5f);
+  gui_control_set(&c, 0, CONTROL_STORM_MIN_SEVERITY, 0.9f);
+  assert(c.storm.max_severity == 0.9f);
+  gui_control_set(&c, 0, CONTROL_STORM_MAX_SEVERITY, 0.1f);
+  assert(c.storm.min_severity == 0.1f);
 
   unsigned last = c.rain.surface_count - 1;
   for (unsigned surface = 0; surface < last; ++surface) {
-    assert(gui_control_set(&c, surface, CONTROL_SURFACE_WEIGHT, 0.0f) == NULL);
+    assert(gui_control_set(&c, surface, CONTROL_SURFACE_COVERAGE, 0.0f) == NULL);
   }
-  assert(gui_control_set(&c, last, CONTROL_SURFACE_WEIGHT, 0.0f) != NULL);
-  assert(gui_control_get(&c, last, CONTROL_SURFACE_WEIGHT) > 0.0f);
+  assert(gui_control_set(&c, last, CONTROL_SURFACE_COVERAGE, 0.0f) != NULL);
+  assert(gui_control_get(&c, last, CONTROL_SURFACE_COVERAGE) > 0.0f);
 
   gui_control_set(&c, 4, CONTROL_CLICK_FREQUENCY_MAX, 500.0f);
   assert(c.rain.surface[4].click_frequency_min_hz == 500.0f);
@@ -110,9 +102,9 @@ static void test_slider_round_trip(void) {
     }
   }
   double low, high;
-  gui_slider_range(CONTROL_SURFACE_WEIGHT, &low, &high);
-  assert(gui_slider_value(CONTROL_SURFACE_WEIGHT, low) == 0.0f);
-  assert(gui_slider_position(CONTROL_SURFACE_WEIGHT, 0.0f) == low);
+  gui_slider_range(CONTROL_SURFACE_COVERAGE, &low, &high);
+  assert(gui_slider_value(CONTROL_SURFACE_COVERAGE, low) == 0.0f);
+  assert(gui_slider_position(CONTROL_SURFACE_COVERAGE, 0.0f) == low);
   gui_slider_range(CONTROL_LOWPASS, &low, &high);
   assert(gui_slider_value(CONTROL_LOWPASS, low) == 0.0f);
   assert(gui_slider_position(CONTROL_LOWPASS, 0.0f) == low);
@@ -125,8 +117,12 @@ static void test_text(void) {
   float value = 0.0f;
   assert(gui_control_parse(CONTROL_BUBBLE_RADIUS_MIN, "0.5", &value));
   assert(close_to(value, 0.0005f));
-  gui_control_format(CONTROL_SURFACE_WEIGHT, 6.05624e-05f, text, sizeof(text));
-  assert(strcmp(text, "6.05624e-05") == 0);
+  gui_control_format(CONTROL_SURFACE_COVERAGE, 6.31e-05f, text, sizeof(text));
+  assert(strcmp(text, "6.31e-05") == 0);
+  gui_control_format(CONTROL_FIXED_WIND_BEARING, -1.5707963f, text, sizeof(text));
+  assert(strcmp(text, "-90") == 0);
+  assert(gui_control_parse(CONTROL_FIXED_WIND_BEARING, "45", &value));
+  assert(close_to(value, 0.78539816f));
   static const char *invalid[] = {"", "abc", "1x", "nan", "inf", "1e999", " "};
   for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
     value = 7.0f;
@@ -148,9 +144,9 @@ static void test_surface_add(void) {
   assert(gui_surface_add(&c, WATER) == NULL);
   noise_surface *added = &c.rain.surface[NOISE_MAX_SURFACES - 1];
   assert(strcmp(added->name, "Water copy") == 0);
-  assert(added->weight == 0.0f && added->weight_mod == 0.0f);
+  assert(added->coverage == 0.0f);
   noise_surface expected = c.rain.surface[WATER];
-  expected.weight = 0.0f;
+  expected.coverage = 0.0f;
   memcpy(expected.name, added->name, sizeof(expected.name));
   assert(memcmp(added, &expected, sizeof(expected)) == 0);
   assert(noise_config_valid(&c));
@@ -167,7 +163,7 @@ static void test_surface_delete(void) {
   noise_config c;
   gui_startup_config(&c);
   while (c.rain.surface_count > 1) {
-    assert(gui_surface_delete(&c, 0) == NULL || c.rain.surface[0].weight > 0.0f);
+    assert(gui_surface_delete(&c, 0) == NULL || c.rain.surface[0].coverage > 0.0f);
     assert(noise_config_valid(&c));
   }
   assert(strcmp(c.rain.surface[0].name, "Asphalt roof") == 0);
@@ -176,10 +172,10 @@ static void test_surface_delete(void) {
   assert(memcmp(&c, &single, sizeof(c)) == 0);
 
   gui_startup_config(&c);
-  for (unsigned i = 0; i < c.rain.surface_count; ++i) c.rain.surface[i].weight = 0.0f;
-  c.rain.surface[DIRT].weight = 1.0f;
+  for (unsigned i = 0; i < c.rain.surface_count; ++i) c.rain.surface[i].coverage = 0.0f;
+  c.rain.surface[DIRT].coverage = 1.0f;
   assert(gui_surface_delete(&c, DIRT) != NULL);
-  assert(c.rain.surface[0].weight > 0.0f);
+  assert(c.rain.surface[0].coverage > 0.0f);
   assert(noise_config_valid(&c));
 }
 
@@ -199,6 +195,60 @@ static void test_surface_rename(void) {
   assert(noise_config_valid(&c));
 }
 
+static void test_track_shares(void) {
+  noise_config c;
+  gui_startup_config(&c);
+  gui_control_set(&c, 0, CONTROL_SHAPE_BUILD, 0.8f);
+  assert(c.storm.shape.decay_share <= 0.2f + 1e-6f);
+  gui_control_set(&c, 0, CONTROL_SHAPE_DECAY, 0.9f);
+  assert(c.storm.shape.build_share <= 0.1f + 1e-6f);
+  assert(c.storm.shape.build_share + c.storm.shape.decay_share <= 1.0f);
+  assert(noise_config_valid(&c));
+}
+
+static void test_status_text(void) {
+  noise_config c;
+  gui_startup_config(&c);
+  noise_status s = {0};
+  s.weather.temperature_c = 18.0f;
+  s.weather.rain_mm_h = 12.0f;
+  s.weather.wind_mean_m_s = 9.0f;
+  s.weather.wind_m_s = 10.5f;
+  s.weather.lightning_per_min = 2.0f;
+  s.weather.cell.distance_m = 20000.0f;
+  s.rain_played_per_s = 2000.0f;
+  s.rain_arrivals_per_s = 310000.0f;
+  s.bed_share = 0.95f;
+  s.cricket_quiet = NOISE_QUIET_RAIN | NOISE_QUIET_WIND;
+  s.cicada_quiet = NOISE_QUIET_COLD | NOISE_QUIET_RAIN;
+  s.cicada_activity = 0.4f;
+  char text[256];
+  gui_layer_status(GUI_LAYER_RAIN, &s, &c, text, sizeof(text));
+  assert(strcmp(text, "12.0 mm/h · 2k of 310k drops/s played") == 0);
+  gui_layer_status(GUI_LAYER_BED, &s, &c, text, sizeof(text));
+  assert(strcmp(text, "Plays 95% of rain power at ×1") == 0);
+  gui_layer_status(GUI_LAYER_CRICKETS, &s, &c, text, sizeof(text));
+  assert(strcmp(text, "Silent: rain 12.00 mm/h, above 0.50; wind 9.0 m/s, above 8.0") == 0);
+  gui_layer_status(GUI_LAYER_CICADAS, &s, &c, text, sizeof(text));
+  assert(strcmp(text, "Silent: 18.0 °C, below 22.0 °C; rain 12.00 mm/h, above 0.50 · "
+                      "chorus fading, 40%") == 0);
+  gui_layer_status(GUI_LAYER_THUNDER, &s, &c, text, sizeof(text));
+  assert(strstr(text, "strikes past 15 km are silent"));
+  gui_silenced_summary(&s, &c, text, sizeof(text));
+  assert(strcmp(text, "Silenced: crickets (rain, wind) · cicadas (cold, rain)") == 0);
+  c.cicadas.gain = 0.0f;
+  gui_silenced_summary(&s, &c, text, sizeof(text));
+  assert(strcmp(text, "Silenced: crickets (rain, wind)") == 0);
+  gui_layer_status(GUI_LAYER_CICADAS, &s, &c, text, sizeof(text));
+  assert(strcmp(text, "Off") == 0);
+  /* Long text is cut, never overrun. */
+  char small[8];
+  gui_layer_status(GUI_LAYER_CRICKETS, &s, &c, small, sizeof(small));
+  assert(strlen(small) == sizeof(small) - 1);
+  gui_silenced_summary(&s, &c, small, sizeof(small));
+  assert(strlen(small) < sizeof(small));
+}
+
 void run_gui_controls_tests(void) {
   test_table_complete();
   test_startup_valid();
@@ -209,4 +259,6 @@ void run_gui_controls_tests(void) {
   test_surface_add();
   test_surface_delete();
   test_surface_rename();
+  test_track_shares();
+  test_status_text();
 }

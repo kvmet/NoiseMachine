@@ -52,19 +52,19 @@ def main():
             assert struct.unpack_from("<I", raw, 40)[0] == len(samples)
         for material in ("water", "dirt", "leaf", "concrete", "glass", "metal",
                          "plastic", "asphalt", "asphalt-roof", "mixed"):
-            result = run(str(host), "-k", "rain", "-r", "1", "-m", material,
+            result = run(str(host), "-k", "rain", "-r", "150", "-m", material,
                          "-d", "3", str(destination), capture_output=True, text=True)
             assert "capacity losses: 0" in result.stdout, result.stdout
             assert "clipped samples: 0" in result.stdout, result.stdout
-        run(str(host), "-k", "rain", "-k", "hum50", "-v", "-d", "20",
+        run(str(host), "-k", "rain", "-k", "thunder", "-v", "-x", "600", "-d", "20",
             str(destination), stdout=subprocess.DEVNULL)
         for args in (("-d", "nan"), ("-d", "inf"), ("-d", "1e300"), ("-d", "-1"),
                      ("-d", ""), ("-d", "0"), ("-s", "-1"), ("-s", ""),
-                     ("-s", "4294967296"), ("-s", "1x"), ("-r", "nan"), ("-r", "1.1"),
-                     ("-k", "bad"), ("-m", "bad"), ("-v", "-l", "0.9", "-u", "0.2"),
-                     ("-v", "-r", "0"), ("-z", "1"), ("-g", "1e30"), ("-n", "2001"),
-                     ("-b", "0.51"), ("-a", "-0.1"), ("-f", "nan"), ("-t", "21"),
-                     ("-t", "-1"), ("-c", "bad")):
+                     ("-s", "4294967296"), ("-s", "1x"), ("-r", "nan"), ("-r", "201"),
+                     ("-k", "bad"), ("-m", "bad"), ("-l", "0.2"), ("-x", "0.5"),
+                     ("-x", "601"), ("-T", "46"), ("-w", "41"), ("-z", "1"),
+                     ("-g", "1e30"), ("-n", "2001"), ("-b", "0.51"), ("-a", "-0.1"),
+                     ("-f", "nan"), ("-t", "31"), ("-t", "-1"), ("-c", "bad")):
             destination.write_bytes(b"preserve existing file")
             result = subprocess.run((str(host), *args, str(destination)), capture_output=True)
             assert result.returncode != 0, args

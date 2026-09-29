@@ -7,7 +7,7 @@
 #include "noise_types.h"
 #include "noise_ambient.h"
 #include "noise_spatial.h"
-#include "noise_weather.h"
+#include "noise_storm.h"
 #include "noise_rain.h"
 #include "noise_wind.h"
 #include "noise_crickets.h"
@@ -24,7 +24,7 @@ typedef struct noise_config {
   float ambient_gain[NOISE_KIND_COUNT]; /* Independent linear gains, each 0..1. */
   float reverb_gain; /* Rain and insect sends are before distance attenuation. */
   noise_listener_config listener;
-  noise_weather_config weather;
+  noise_storm_config storm;
   noise_rain_config rain;
   noise_wind_config wind;
   noise_cricket_config crickets;
@@ -42,10 +42,24 @@ typedef struct noise_gen {
   noise_crickets crickets;
   noise_cicadas cicadas;
   noise_thunder thunder;
-  noise_weather weather;
+  noise_storm storm;
   noise_rain rain;
   noise_reverb reverb;
 } noise_gen;
+
+/* What the weather is doing to each layer, for display. */
+typedef struct noise_status {
+  noise_weather weather;
+  float rain_arrivals_per_s; /* Drops landing between the rain distance bounds. */
+  float rain_played_per_s; /* Of those, drops played one by one. */
+  float bed_share; /* Share of rain power the bed carries at bed_gain 1. */
+  float wind_level; /* Wind level over wind.gain at the current speed. */
+  float cricket_rate_hz; /* Chirps per second per cricket. */
+  unsigned cricket_quiet; /* NOISE_QUIET_* flags; zero when the weather allows chirps. */
+  unsigned crickets_singing; /* Crickets in a singing bout, 0..NOISE_CRICKET_VOICES. */
+  unsigned cicada_quiet; /* NOISE_QUIET_* flags. */
+  float cicada_activity; /* Chorus level 0..1; glides toward 0 while quiet. */
+} noise_status;
 
 void noise_config_default(noise_config *config);
 /* Returns 1 when noise_init and noise_set_config would accept config. */
@@ -61,6 +75,7 @@ noise_result noise_trigger_drop(noise_gen *gen, const droplet *drop);
 noise_result noise_trigger_thunder(noise_gen *gen, const thunder_strike *strike);
 /* Writes 2 * frames interleaved int16 samples (L, R); returns frames. */
 size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames);
+void noise_get_status(const noise_gen *gen, noise_status *status);
 
 #ifdef __cplusplus
 }

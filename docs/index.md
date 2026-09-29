@@ -7,19 +7,20 @@ of calibrated acoustic pressure or a full fluid simulation.
 
 ## Signal path and units
 
-Each rain arrival creates up to four damped modes from its surface: a click,
-two resonances, and a bubble. Their sum feeds the direct stereo path
-and a shared reverb. Crickets and cicadas use the same direct path and
+Each played rain drop creates up to four damped modes from its surface: a
+click, two resonances, and a bubble. Their sum feeds the direct stereo path
+and a shared reverb. A noise bed stands in for drops too many to play one by
+one; it joins the direct path only. Crickets and cicadas use the same direct path and
 reverb. Thunder has its own reverb and limiter, then joins the direct mix.
 Ambient layers join the stereo mix after the reverb.
-`rain.gain` scales both direct rain and the reverb send. `master_gain` scales
+`rain.gain` scales direct rain, the bed, and the reverb send. `master_gain` scales
 the final output before conversion to PCM.
 
 Distances and radii use metres; velocity uses m/s; angles use radians;
 frequency uses Hz; damping uses reciprocal seconds. `radius_m` is the water
 drop radius. `bubble_radius_m` is the radius of enclosed air, a separate
 quantity. Atmospheric pressure is 101325 Pa. Water density is 1000 kg/m³,
-the air heat-capacity ratio is 1.4, and gravity is 9.81 m/s².
+and the air heat-capacity ratio is 1.4.
 
 The original reference table gives atmospheric pressure in kPa. Minnaert's
 formula below requires Pa when the other inputs use SI units.
@@ -49,17 +50,15 @@ that table over its 735-sample period. An integer counter repeats after
 
 Wind starts with one common and two independent white-noise streams. Stereo
 width crossfades each channel between the common and its independent stream.
-A one-pole filter sets brightness from a 400 Hz cutoff at zero to 8 kHz at
-one. A second 120 Hz one-pole filter adds low-frequency movement. Gusts move
-between random amplitude targets. Gust rate sets both the target interval and
-the smoothing rate; gust depth blends between constant and modulated amplitude.
-Wind uses a separate random stream, so enabling it does not change rain or the
+A one-pole filter sets the brightness, and a second 120 Hz one-pole filter adds
+low-frequency movement. Level, brightness, and balance follow the weather; see
+Weather couplings. Wind uses a separate random stream, so enabling it does not change rain or the
 other ambient layers.
 
 Crickets are four persistent individuals. Each keeps its own pitch offset,
-position, pulse timing, and three to five pulses per chirp. Each
-chirps on a steady period of 1 / call rate, scaled by a fixed 0.9 to 1.1 per
-cricket, with 3 percent jitter per chirp; the small rate differences let the
+position, pulse timing, and three to five pulses per chirp. The call rate
+follows temperature; see Weather couplings. Each chirps on a steady period of
+1 / call rate, scaled by a fixed 0.9 to 1.1 per cricket, with 3 percent jitter per chirp; the small rate differences let the
 chorus drift in and out of phase. Each cricket alternates singing and silent
 bouts with exponential lengths, means 30 s and 10 s. Within each pulse the
 carrier falls 3 percent, as the wing's tooth strikes slow. Pitch variation sets
@@ -105,49 +104,86 @@ streams and do not allocate rain voices.
 
 ## Rain arrivals and size distribution
 
-Rain intensity I is a dimensionless control in [0, 1], not mm/hour.
-The requested event rate is
+`weather.rain_mm_h` is a rain rate R in mm/h. Drop sizes follow the
+Marshall-Palmer spectrum [9]:
 
-    λ = I × max_drops_per_s
+    N(D) = 8000 exp(-ΛD) per m³ per mm,  Λ = 4.1 R^-0.21 per mm
 
-At each frame, one Bernoulli trial with probability λ / 44100 decides
+Drops of diameter D reach each square metre of ground at N(D) v(D) per
+second, where v is the terminal speed below. The engine sums this flux over
+50 bins of 0.1 mm from 0.8 to 5.8 mm, the range of the terminal-speed fit.
+The sum is the physical arrival rate per m². Each drop picks a bin by this
+flux-weighted distribution, then a diameter uniform within the bin. Heavier
+rain has a smaller Λ, so a larger share of its drops are large.
+
+The physical rate is far above what the voices can play. Within 5 m,
+0.5 mm/h gives about 12,000 drops/s and 150 mm/h about 700,000.
+`rain.max_drops_per_s` is the budget of drops played one by one. The played
+rate is the smaller of the budget and the physical rate over the annulus
+between the distance bounds. Played drops land in the near ring from
+`min_distance_m` to the radius that the budget fills at the physical density:
+
+    near_m = sqrt(r_min² + played / (π × flux)),  at most r_max
+
+When the budget covers the whole annulus, near_m is r_max and every drop
+plays. Otherwise the rain bed stands in for the drops beyond near_m.
+
+At each frame, one Bernoulli trial with probability played / 44100 decides
 whether a drop arrives. This is a discrete approximation to a Poisson
 process, not an exact continuous Poisson scheduler. In N frames, the count
 has mean Np and variance Np(1-p). It allows at most one automatic arrival
 per frame. At the maximum supported rate of 2000/s, count variance is
-about 4.5% below the Poisson variance. The default maximum is 900/s.
+about 4.5% below the Poisson variance. The default budget is 900/s.
 
 Arrivals are scheduled at the listener, following the arrival-time approach
 in [2, section 3.1]. No falling particles, propagation warmup, or queued
 flight trajectories are simulated.
 
-Diameter distributions use [1, table 1]:
-
-- Light: 84% between 0.8 and 1.1 mm, 16% between 1.1 and 2.2 mm.
-- Heavy: 32% between 0.8 and 1.1 mm, 61% between 1.1 and 2.2 mm,
-  and 7% above 2.2 mm.
-- Very heavy: 24%, 52%, and 24% in those same three bins.
-
-The engine assigns these distributions to intensity 0, 0.5, and 1,
-respectively, and interpolates probabilities between them. At intensity
-zero, there are no events even though a size distribution is defined.
-Diameters are uniform within the selected bin. The largest bin ends at
-5.8 mm, the upper limit of the terminal-speed fit. Both interpolation and
-uniform sampling within bins are implementation choices.
-
 Each arrival independently samples one of the first `rain.surface_count`
-entries in `rain.surface` by its `weight`. Weights need not sum to one. The
-default list has nine surfaces with weights Water 0.37, Dirt 0.21, Leaf
-0.26, Concrete 0.15, Glass 0.005, and Metal 0.005. Plastic, Asphalt, and
-Asphalt roof weights default to zero.
+entries in `rain.surface` by its `coverage`, the surface's relative share of
+the ground. Coverages need not sum to one. The default list has nine
+surfaces with coverage Water 0.37, Dirt 0.21, Leaf 0.26, Concrete 0.15,
+Glass 0.005, and Metal 0.005. Plastic, Asphalt, and Asphalt roof default to
+zero. Coverage sets the share of drops on each surface; it does not place
+surfaces around the listener.
 
 The azimuth is uniform over a circle. Radial distance is
 
-    r = sqrt(r_min² + u(r_max² - r_min²)),  u uniform in [0, 1)
+    r = sqrt(r_min² + u(near_m² - r_min²)),  u uniform in [0, 1)
 
-This makes positions uniform by area in an annulus, rather than
-concentrating drops near the listener. Material weights describe fractions
-of arrivals; they do not define spatial patches or physical surface areas.
+This makes positions uniform by area in the near ring, rather than
+concentrating drops near the listener.
+
+Rate, sizes, and near_m follow the weather 100 times a second. Sounding
+drops keep their coefficients.
+
+## Rain bed
+
+The bed plays the drops beyond near_m as noise matched to the played rain.
+It is a vocoder with 15 bands at half-octave spacing from 125 Hz to 16 kHz.
+Each band is two cascaded band-pass biquads with Q 1.414; this spacing keeps
+the summed response flat within about 2 dB. Analysis runs on the left ear of
+the played rain after spatial processing, so it carries distance gain, head
+shadow, and the rear filter. Drops arrive evenly around the listener, so one
+ear gives the power for both. Each band's power P_b is smoothed with a 0.5 s
+time constant. Synthesis passes independent uniform noise per band and ear
+through the same filters, at gain
+
+    g_b = sqrt(ratio × P_b / (σ² × U_b × plateau))
+
+where σ² = 1/3 is the noise variance, U_b is the band's power gain for unit
+white noise, and plateau is the bank's summed power gain averaged from
+250 Hz to 8 kHz. The ratio is the power of the unplayed ring over the played
+ring, for area-uniform drops at the ear gain 0.707 / max(1, r):
+
+    ring(r) = r²/2 for r <= 1, 1/2 + ln r above
+    ratio = (ring(r_max) - ring(near_m)) / (ring(near_m) - ring(r_min))
+
+Gains update 100 times a second. Against every drop played one by one, the
+bed holds the level within 1.5 dB and the spectral centroid within
+10 percent. `rain.bed_gain` scales the bed after `rain.gain`; 1 matches the
+drops it stands in for. The bed does not feed the reverb and uses its own
+random stream.
 
 ## Drop velocity and excitation
 
@@ -159,22 +195,19 @@ and the polynomial result is in centimetres per second:
     d > 1.4:  V_T =  24.1660 + 448.8336d - 75.6265d² + 4.2695d³
 
 Multiply by 0.01 to obtain m/s. For example, a 1 mm drop has a terminal
-speed of about 4.015 m/s. Impact speed after falling height z is
-
-    V = V_T sqrt(1 - exp(-2gz / V_T²))
-
-The implementation uses `expm1f` for numerical accuracy at small heights.
-The default height is 20 m. Manual arrivals supply their own velocity.
+speed of about 4.015 m/s. Automatic drops land at terminal speed. Manual
+arrivals supply their own velocity.
 
 Mass is proportional to radius cubed, and kinetic energy is mV²/2.
 The source amplitude follows the square root of relative kinetic energy:
 
-    A = 0.035 × (drop_radius / 0.0005)^(3/2) × V / 4
+    A = 0.004375 × (drop_radius / 0.0005)^(3/2) × V / 4
 
 This is a chosen conversion from impact energy to digital amplitude,
 not a pressure calibration. It differs from the pressure amplitude model
-in [1]. The coefficient 0.035 sets mix headroom, and the radius and speed
-in the denominator define a 1 mm diameter reference drop at 4 m/s.
+in [1]. The coefficient puts the peaks of 150 mm/h rain near -3 dBFS at
+unit gains, so drizzle is quiet. The radius and speed in the denominator
+define a 1 mm diameter reference drop at 4 m/s.
 
 ## Surfaces
 
@@ -273,8 +306,7 @@ material constants or solutions for a particular object shape.
 | --- | --- |
 | `surface_count` | 1 to 9 |
 | `name` | NUL within 16 bytes |
-| `weight` | 0 to 1000; at least one used surface above zero |
-| `weight_mod` | -1 to 1 |
+| `coverage` | 0 to 1000; at least one used surface above zero |
 | `click_gain_min`, `click_gain_max` | 0 to 2 |
 | `click_frequency_min_hz`, `click_frequency_max_hz` | 20 to 20000 Hz |
 | `click_damping_ratio` | 0.05 to 50 |
@@ -534,63 +566,97 @@ like terrain. The loop low-pass has alpha 0.5, about 1.2 kHz.
 `thunder.reverb_decay_s` sets the time to fall 60 dB. The send is the
 dry sum at unity; gain 0.5 puts the wet about 3 dB under the dry roll.
 
-Automatic strikes start one at time zero, then use a Bernoulli trial per
-frame at `thunder.rate_per_min / 60` per second. The comparison uses 32 bits,
-so slow rates keep their resolution. Positions are uniform by area between
-the distance bounds, with uniform azimuth. Two voices can overlap. A strike
+Automatic strikes follow `weather.lightning_per_min`. The first frame with a
+nonzero rate strikes once, then a Bernoulli trial per frame runs at the rate
+/ 60 per second. The comparison uses 32 bits, so slow rates keep their
+resolution. Strikes scatter around the storm core: Gaussian with
+`thunder.scatter_m` (4 km) per axis, at least 200 m away. Strikes beyond 15 km are skipped, since thunder is
+rarely heard that far. Two voices can overlap. A strike
 that finds both busy is rejected and counted in `state.dropped_thunder`.
 
-## Weather controller
+## Storm simulation
 
-Optional intensity variation uses a three-state Markov chain. At each
-`weather.step_s` interval, its transition probabilities are:
+`state.weather` holds what every sound module reads: rain rate, mean wind
+and wind with gusts, the bearing the wind comes from, temperature, lightning
+rate, and the position of the nearest storm core. The storm module updates
+it every 441 frames, 100 times a second. A frame counter sets the update
+times, so they do not depend on fill size.
 
-- From light: light 0.85, heavy 0.15, very heavy 0.
-- From heavy: light 0.10, heavy 0.80, very heavy 0.10.
-- From very heavy: light 0, heavy 0.15, very heavy 0.85.
+With `storm.manual` set, the default, weather comes from `storm.fixed`.
+Gusts still vary around the fixed mean wind. Otherwise the engine simulates
+passing storms.
 
-The states target the configured minimum intensity, midpoint, and
-maximum intensity. These probabilities are a chosen weather texture,
-not fitted meteorological data. Self-transitions produce persistent
-weather; transitions only move to adjacent states. At the default
-8 s interval, expected uninterrupted dwell times are about 53, 40,
-and 53 seconds. The first transition occurs after one full interval.
+`storm.shape` sets every distance, rate, and amount below; the numbers given
+are its defaults. Each quantity that grows with severity s has a mild value
+at s = 0 and a severe value at s = 1.
 
-The initial state is whichever target is closest to `weather.intensity`,
-with midpoint ties resolved upward. Actual intensity starts at the
-requested value and approaches the target once per audio frame:
+Storms arrive in storm time as a Poisson process at `storms_per_hour`, one
+trial per update, while fewer than two are active. A new cell starts
+`approach_m` (40 km) before its closest point to the listener, travels twice
+that at `cell_speed_m_s`, and ends. Tracks follow a prevailing direction
+drawn once per seed, with a Gaussian heading spread of 0.35 rad, and pass
+the listener at a miss distance uniform within `miss_m` (10 km) either side. Severity is uniform between
+`min_severity` and `max_severity`. When `storms_per_hour` is above zero, the
+first storm starts between 1 km before and 4 km past its closest point,
+within 2 km of the listener, so a new engine starts in rain.
 
-    α = 1 - exp(-1 / (weather.slew_s × sample_rate))
-    I[n+1] = I[n] + α(target - I[n])
+A cell's stage rises over the first `build_share` (30 percent) of its track
+and falls over the last `decay_share` (35 percent), each a smoothstep; the
+two shares sum to at most 1. At the listener, with the core a
+distance along ahead on its track and a distance across beside it:
 
-The default time constant is 2 s. This is an exponential approach,
-not a fixed-duration ramp. It changes arrival rate and size probabilities;
-existing drops retain their coefficients. With `weather.vary` disabled,
-intensity remains fixed. With both bounds zero, varying rain stays silent.
-The accumulator carries rounding error between frames so a slow transition
-does not stall when an individual step is smaller than a float can represent.
+- Rain: stage × peak × (core + tail), where the peak is
+  mild × (severe / mild)^s: 2 mm/h at severity 0, 150 mm/h at 1. The core is Gaussian with σ 3 km along and 10 km across, a
+  squall line wider than it is deep. Behind the core a tail adds 10 percent
+  of the peak, decaying over 15 km, with σ 15 km across.
+- Wind: outflow blowing away from the core at stage × (4 + 20 × s) m/s. It
+  reaches (4 + 4 × s) km ahead of the core with a 1.5 km edge, the gust front, and decays over 6 km behind; σ 12 km across. It adds
+  to the breeze, which blows along the prevailing direction.
+- Cooling: stage × (3 + 7 × s) °C, with the same front, decaying over 25 km
+  behind; σ 15 km across.
+- Lightning: stage² × (0.5 + 11.5 × s²) flashes/min.
 
-## Weather modulation
+Rain adds over cells, limited to 200 mm/h, and wind vectors add. Lightning
+and the reported position come from the nearest cell. Temperature relaxes
+toward `storm.temperature_c` minus the largest cooling, with a 240 s time
+constant while falling and 2400 s while rising.
 
-`weather.mod_amount` routes the current rain intensity to sound parameters.
-Each amount is an attenuverter from -1 to 1. Zero disconnects a route, positive
-amounts follow intensity, and negative amounts invert it. Arrival rate and drop
-size default to 1 to preserve the basic rain model; all other routes default to
-zero.
+The gust g is an Ornstein-Uhlenbeck process with time constant
+`storm.gust_time_s` (4 s) and standard deviation `storm.gust_intensity`
+(0.3), in both weather modes. Wind with gusts is max(0, mean × (1 + g)), so
+gusts scale with the current mean wind. Gusts use their own random stream.
 
-For arrival rate, a positive amount blends between the configured maximum rate
-and the intensity-scaled rate. A negative amount blends toward inverse
-intensity. Drop size blends between the medium distribution and the light to
-very-heavy intensity curve, or its inverse. Gain destinations use linear
-modulation around their base setting at intensity 0.5. Distance and fall height
-use the same rule in logarithmic space.
+`time_scale` multiplies storm time: cell motion, storm arrivals, and
+temperature relaxation. Gusts, lightning timing, drops, and insect calls
+stay real time. The shapes and constants give a plausible sequence, a gust
+front and cooling several minutes before the heaviest rain and a light tail
+after it; they are not fitted to measurements.
 
-Each surface carries its own route in `weight_mod`, so the route stays
-with the surface when the list changes. It multiplies the surface's base
-weight by `1 + weight_mod × (2I-1)`, with a 0.001 floor, then normalizes
-the effective weights of the used surfaces. The floor keeps a valid
-distribution when every route reaches its negative extreme. A zero base weight
-remains zero.
+## Weather couplings
+
+Each module reads the weather at every update.
+
+- Rain: arrival rate, drop sizes, near ring, and bed, as above.
+- Wind: level is `wind.gain` × (min(speed, 35) / 20)², so the gain is the
+  level at 20 m/s and level rises 12 dB per doubling of speed. This is a
+  fitted curve, not a flow model. Brightness b = min(1, speed / 30) sets the
+  air cutoff to `wind.brightness` × 400 × 20^b Hz, at most 18 kHz.
+  `wind.rumble` scales the 120 Hz rumble. The ear facing the wind gets
+  sqrt(1 + `wind.balance`) times the level and the other ear
+  sqrt(1 - `wind.balance`); the default balance is 0.5. Levels glide with a
+  20 ms time constant.
+- Crickets: Dolbear's law [10] gives 7.2 T - 32 chirps/min at T °C. The
+  call rate is that times `call_rate_scale`, limited to 0.05 to 10 chirps/s.
+  Crickets stay silent below `min_temperature_c` (13 °C), in rain above
+  `max_rain_mm_h` (0.5), or in mean wind above `max_wind_m_s` (8 m/s). A
+  chirp in progress finishes.
+- Cicadas: silent below `min_temperature_c` (22 °C) or in rain above
+  `max_rain_mm_h` (0.5). A call that comes
+  due while silent waits another rest. The chorus level follows with a 5 s
+  time constant.
+- Thunder: rate and position, as above.
+
+The default insect thresholds are chosen values, not measured behavior.
 
 ## API and limits
 
@@ -610,12 +676,19 @@ inspection by the owning thread.
 
 `noise_set_config` applies a new configuration while playing. Voices,
 filters, and random streams continue. It validates like `noise_init` and
-leaves the engine unchanged on `NOISE_INVALID_CONFIG`. A changed initial
-intensity or `weather.vary` restarts the weather controller at that
-intensity. Otherwise the current intensity and target stay, clamped to the
-new bounds while varying. Distance, head, width, and surface changes apply
+leaves the engine unchanged on `NOISE_INVALID_CONFIG`. Storms in progress
+continue. A changed `storm.temperature_c` shifts the current temperature by
+the same amount. Weather is recomputed at once without advancing time, so
+reapplying the same configuration changes nothing. Distance, head, width, and surface changes apply
 to new drops and insect calls; sounding voices keep their spatial settings.
 Call it between fills on the audio thread.
+
+`noise_get_status` reports the weather and what it does to each layer: rain
+arrivals and played drops per second, the bed's share of rain power, the
+wind level relative to its gain, the cricket chirp rate and how many
+crickets are in a singing bout, cicada chorus activity, and for each insect
+layer the `NOISE_QUIET_*` flags naming the conditions that silence it. Call
+it on the audio thread; hosts copy the result to their control thread.
 
 `noise_trigger_thunder` accepts a strike distance from 200 m to 15 km and an
 angle from negative 2π to positive 2π. Invalid strikes return
@@ -634,30 +707,46 @@ Do not call it concurrently with rendering.
 Configuration ranges are:
 
 - Ambient, rain, master, and reverb gains: 0 to 1 each.
-- Wind brightness, gust depth, and stereo width: 0 to 1. Gust rate: 0.01 to
-  2 Hz.
-- Cricket call rate: 0.05 to 10 chirps/s per cricket. Pitch: 2 to 8 kHz.
+- Wind gain, the level at 20 m/s, stereo width, and balance: 0 to 1;
+  balance default 0.5. Brightness: 0.25 to 4, default 1. Rumble: 0 to 2,
+  default 1.
+- Insect thresholds: minimum temperature -10 to 45 °C, maximum rain 0 to
+  200 mm/h, cricket maximum wind 0 to 40 m/s.
+- Cricket call rate scale: 0.1 to 2, default 0.5. Pitch: 2 to 8 kHz.
   Pitch variation and stereo width: 0 to 1. Distance bounds: 0.25 to 100 m,
   ordered; defaults 2 and 15 m.
 - Cicada species: dog-day, minminzemi, or higurashi. Pitch: 2 to 10 kHz,
   default 5 kHz. Click rate scale: 0.5 to 1.5. Chorus and stereo width: 0 to 1. Distance bounds: 0.25 to 100 m, ordered;
   defaults 5 and 30 m.
-- Thunder gain: 0 to 1, default 0. Strike rate: 0 to 20 per minute, default 2.
-  Distance bounds: 200 m to 15 km, ordered; defaults 1 and 8 km. Reverb
-  gain: 0 to 1, default 0.5. Reverb decay: 0.5 to 10 s, default 3.5 s.
-- Initial, minimum, and maximum rain intensity: 0 to 1; minimum must not
-  exceed maximum. Initial intensity must lie within bounds when varying.
-- `weather.vary`: 0 or 1.
-- Weather step: 0.1 to 3600 s. Slew time constant: 0.01 to 60 s.
-- Maximum arrival rate: 0 to 2000/s.
-- Distance bounds: 0.25 to 100 m, ordered; equal bounds make a ring.
-- Falling height: 0.01 to 1000 m.
+- Thunder gain: 0 to 1, default 0. Reverb gain: 0 to 1, default 0.5.
+  Reverb decay: 0.5 to 10 s, default 3.5 s. Scatter: 0 to 10 km, default 4.
+- `storm.manual`: 0 or 1, default 1.
+- Fixed weather: rain 0 to 200 mm/h, default 0; wind 0 to 40 m/s, default 3;
+  wind bearing and storm angle -2π to 2π, default 0; temperature -10 to
+  45 °C, default 25; lightning 0 to 30 flashes/min, default 0; storm
+  distance 200 m to 30 km, default 5 km.
+- Storms: time scale 1 to 600, default 1; clear-sky temperature -10 to
+  45 °C, default 25; severity bounds 0 to 1, ordered, defaults 0.2 and 0.8;
+  0 to 4 storms per hour, default 0.5; cell speed 3 to 30 m/s, default 10;
+  breeze 0 to 15 m/s, default 2; gust intensity 0 to 1, default 0.3; gust
+  time 0.5 to 30 s, default 4.
+- Storm shape: each mild and severe pair ordered. Peak rain 0.1 to 200 mm/h.
+  Core depth 0.5 to 20 km, core width 0.5 to 50 km. Tail share 0 to 1; tail
+  length and width 1 to 50 km. Front lead 0 to 20 km; front edge 0.1 to
+  10 km. Outflow 0 to 40 m/s; its decay 0.5 to 50 km and width 1 to 50 km.
+  Cooling 0 to 20 °C; its decay 1 to 100 km and width 1 to 50 km. Cooling
+  time 10 to 3600 s; warming time 60 to 36000 s. Lightning 0 to 30
+  flashes/min. Build share 0.05 to 0.9 and decay share 0.05 to 0.95,
+  summing to at most 1. Approach 10 to 100 km. Miss 0 to 30 km. Heading
+  spread 0 to π.
+- Played drop budget: 0 to 2000/s, default 900. Bed gain: 0 to 4, default 1.
+- Rain distance bounds: 0.25 to 100 m, ordered; equal bounds make a ring.
 - Stereo width: 0 to 0.5 m; head and rear amounts: 0 to 1.
 - Surface fields: see the table under Surfaces.
-- Weather modulation amounts: -1 to 1 each.
 
 Separate random streams drive ambient samples, wind, crickets, cicadas,
-thunder, thunder echoes, echo terrain, arrivals, drop properties, and weather. Enabling ambient sound or
+thunder, thunder echoes, echo terrain, arrivals, drop properties, the rain
+bed, storms, and gusts. Enabling ambient sound or
 thunder cannot change the rain sequence. Seed zero aliases seed one. Results repeat for the same build,
 configuration, and seed, independent of fill size. Floating-point and
 libm differences can prevent bit-identical output across CPU/toolchain
@@ -672,7 +761,7 @@ and peak voice count.
 ## ESP32 and validation
 
 The sample rate, channel count, and pool size are compile-time constants.
-The engine occupies 100,952 bytes with the tested host ABI, plus 1,024
+The engine occupies 105,168 bytes with the tested host ABI, plus 1,024
 bytes for a 256-frame PCM buffer. Confirm `sizeof(noise_gen)` on the
 target ABI. Keep the generator in static storage, not a small task stack. Buffers are
 caller-owned. Trigonometry, exponentials, and square roots for drops run
@@ -690,9 +779,12 @@ benchmark does not establish that an ESP32 meets that deadline.
 Run `python3 tests/check.py` from the repository root. It builds into a
 temporary directory using the system C/C++ compilers, without adding
 project dependencies. Checks cover analytic bubble frequency and decay,
-hum fundamentals and harmonics, spectral slopes, rain count statistics,
-weather bounds, voice exhaustion and recycling, silence, block-size
-independence, malformed CLI values, WAV headers, all nine surfaces, and
+hum fundamentals and harmonics, spectral slopes, rain arrivals against the
+Marshall-Palmer flux, drop sizes against its distribution, the bed against
+played rain, a storm passage, time scale, gusts, insect and thunder
+couplings, voice exhaustion and recycling, silence, block-size
+independence, malformed CLI values, WAV headers, all nine surfaces at
+150 mm/h without clipping, and
 linking the sketch against the C engine. Spatial checks cover rendered
 phase, ear symmetry, head shelf gain, width bypass, distance gain,
 reverb-send independence, rear filtering, and maximum delay bounds.
@@ -752,3 +844,12 @@ an unpublished source.
    of Geophysical Research 73(6), pp. 1897 to 1906, 1968.
    [DOI](https://doi.org/10.1029/JB073i006p01897).
    Supplies the 16 degree mean direction change between channel segments.
+9. J. S. Marshall and W. McK. Palmer. *The Distribution of Raindrops with
+   Size*. Journal of Meteorology 5(4), pp. 165 to 166, 1948.
+   [DOI](https://doi.org/10.1175/1520-0469(1948)005<0165:TDORWS>2.0.CO;2).
+   Supplies the exponential drop size spectrum and its dependence on rain
+   rate.
+10. A. E. Dolbear. *The Cricket as a Thermometer*. The American Naturalist
+    31(371), pp. 970 to 971, 1897.
+    [DOI](https://doi.org/10.1086/276739).
+    Supplies the chirp rate against temperature.

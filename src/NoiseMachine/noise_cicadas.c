@@ -11,6 +11,7 @@
 #define CICADA_JITTER 0.01f /* Click interval spread. */
 #define CICADA_DROP 0.15f /* Pitch and click rate fall through a held note's wind-down. */
 #define CICADA_SWELL_ALPHA (1.0f / (2.0f * NOISE_SAMPLE_RATE_HZ)) /* 2 s time constant. */
+#define CICADA_ACTIVITY_ALPHA (1.0f / (5.0f * NOISE_SAMPLE_RATE_HZ))
 
 typedef struct cicada_song {
   float click_rate_hz;
@@ -41,7 +42,9 @@ int noise_cicada_config_valid(const noise_cicada_config *c) {
          in_range(c->pitch_hz, 2000.0f, 10000.0f) &&
          in_range(c->click_rate_scale, 0.5f, 1.5f) &&
          in_range(c->chorus, 0.0f, 1.0f) &&
-         noise_placement_valid(&c->placement);
+         noise_placement_valid(&c->placement) &&
+         in_range(c->min_temperature_c, -10.0f, 45.0f) &&
+         in_range(c->max_rain_mm_h, 0.0f, 200.0f);
 }
 
 void noise_cicada_config_default(noise_cicada_config *c) {
@@ -51,12 +54,20 @@ void noise_cicada_config_default(noise_cicada_config *c) {
   c->placement.stereo_width = 0.75f;
   c->placement.min_distance_m = 5.0f;
   c->placement.max_distance_m = 30.0f;
+  c->min_temperature_c = 22.0f;
+  c->max_rain_mm_h = 0.5f;
 }
 
 void noise_cicadas_init(noise_cicadas *cicadas, uint32_t seed) {
   cicadas->rng = stream_seed(seed, 0x94d049bbu);
   cicadas->swell = 0.5f;
   cicadas->swell_target = 0.5f;
+}
+
+void noise_cicadas_follow(noise_cicadas *cicadas, const noise_cicada_config *c,
+                          const noise_weather *weather) {
+  cicadas->quiet = (weather->temperature_c < c->min_temperature_c ? NOISE_QUIET_COLD : 0u) |
+                   (weather->rain_mm_h > c->max_rain_mm_h ? NOISE_QUIET_RAIN : 0u);
 }
 
 static uint32_t cicada_swell(uint32_t hold) {
@@ -129,9 +140,17 @@ static void cicada_call(uint32_t *rng, noise_cicada_voice *voice, const noise_ci
 }
 
 /* Returns the reverb send; the direct sound goes through the spatial model. */
-static float cicada_next(uint32_t *rng, noise_cicada_voice *voice, const noise_cicada_config *c,
+static float cicada_next(noise_cicadas *cicadas, noise_cicada_voice *voice,
+                         const noise_cicada_config *c,
                          const noise_listener_config *listener, noise_bus *bus) {
-  if (!voice->note_length && --voice->until_call == 0) cicada_call(rng, voice, c, listener);
+  uint32_t *rng = &cicadas->rng;
+  if (!voice->note_length && --voice->until_call == 0) {
+    if (cicadas->quiet) {
+      cicada_rest(rng, voice, c);
+    } else {
+      cicada_call(rng, voice, c, listener);
+    }
+  }
   float sample = 0.0f;
   if (voice->note_length) {
     const cicada_song *song = &cicada_songs[c->species];
@@ -203,8 +222,11 @@ static void cicada_chorus_next(noise_cicadas *cicadas, const noise_cicada_config
   }
   --cicadas->swell_samples;
   cicadas->swell += CICADA_SWELL_ALPHA * (cicadas->swell_target - cicadas->swell);
+  cicadas->activity += CICADA_ACTIVITY_ALPHA *
+                       ((cicadas->quiet ? 0.0f : 1.0f) - cicadas->activity);
   /* Band-passed noise power grows with Q; this holds the level at Q 3. */
-  float level = CICADA_CHORUS_LEVEL * c->gain * c->chorus * cicadas->swell * sqrtf(3.0f / q);
+  float level = CICADA_CHORUS_LEVEL * c->gain * c->chorus * cicadas->swell *
+                cicadas->activity * sqrtf(3.0f / q);
   for (unsigned ear = 0; ear < 2; ++ear) {
     float noise = 2.0f * random_unit(rng) - 1.0f;
     bus->direct[ear][bus->position] += level * resonator_next(&cicadas->chorus[ear], noise);
@@ -224,12 +246,13 @@ float noise_cicadas_next(noise_cicadas *cicadas, const noise_cicada_config *c,
       voice->distance_offset = random_unit(rng);
       cicada_rest(rng, voice, c);
     }
-    /* The layer is audible from its first frame. */
+    /* The layer is audible from its first frame unless the weather silences it. */
     cicadas->voice[0].until_call = 1;
+    cicadas->activity = cicadas->quiet ? 0.0f : 1.0f;
   }
   float send = 0.0f;
   for (unsigned i = 0; i < NOISE_CICADA_VOICES; ++i) {
-    send += cicada_next(rng, &cicadas->voice[i], c, listener, bus);
+    send += cicada_next(cicadas, &cicadas->voice[i], c, listener, bus);
   }
   cicada_chorus_next(cicadas, c, bus);
   return send;

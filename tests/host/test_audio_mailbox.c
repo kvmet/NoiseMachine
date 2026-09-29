@@ -3,9 +3,16 @@
 #include <assert.h>
 #include <pthread.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 #define PUBLISHES 200000u
+
+/* Large enough that a torn copy is likely to show. */
+typedef struct audio_request {
+  uint32_t seed;
+  unsigned char payload[4096];
+} audio_request;
 
 static audio_request marked(uint32_t mark) {
   audio_request request;
@@ -27,8 +34,9 @@ static int whole(const audio_request *request) {
 
 static void test_single_thread(void) {
   static audio_mailbox mailbox;
+  static audio_request slots[3];
   audio_request first = marked(1);
-  audio_mailbox_init(&mailbox, &first);
+  audio_mailbox_init(&mailbox, slots, sizeof(first), &first);
   assert(audio_mailbox_take(&mailbox) == NULL);
 
   audio_request second = marked(2);
@@ -47,6 +55,7 @@ static void test_single_thread(void) {
 }
 
 static audio_mailbox shared_mailbox;
+static audio_request shared_slots[3];
 
 static void *write_all(void *unused) {
   (void)unused;
@@ -59,7 +68,7 @@ static void *write_all(void *unused) {
 
 static void test_two_threads(void) {
   audio_request first = marked(0);
-  audio_mailbox_init(&shared_mailbox, &first);
+  audio_mailbox_init(&shared_mailbox, shared_slots, sizeof(first), &first);
   pthread_t writer;
   assert(pthread_create(&writer, NULL, write_all, NULL) == 0);
   uint32_t last = 0;

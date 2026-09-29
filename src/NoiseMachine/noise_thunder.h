@@ -10,6 +10,7 @@
 #define NOISE_THUNDER_BANDS 4u /* Three span the channel's range; one holds echoes. */
 #define NOISE_THUNDER_ECHOES 6u
 #define NOISE_THUNDER_REVERB_SAMPLES 6132u
+#define NOISE_THUNDER_MAX_DISTANCE_M 15000.0f /* Thunder is rarely heard farther away. */
 
 typedef struct thunder_strike {
   position_polar position; /* Distance 200..15000 m. */
@@ -17,11 +18,9 @@ typedef struct thunder_strike {
 
 typedef struct noise_thunder_config {
   float gain;
-  float rate_per_min; /* Automatic strikes; zero allows only manual strikes. */
-  float min_distance_m;
-  float max_distance_m;
   float reverb_gain;
   float reverb_decay_s; /* Time to fall 60 dB. */
+  float scatter_m; /* Automatic strikes spread around the storm core, per axis; 0..10000. */
 } noise_thunder_config;
 
 typedef struct noise_thunder_segment {
@@ -91,6 +90,7 @@ void noise_thunder_init(noise_thunder *thunder, uint32_t seed);
 void noise_thunder_configure(noise_thunder *thunder, const noise_thunder_config *c);
 noise_result noise_thunder_start(noise_thunder *thunder, noise_state *state,
                                   position_polar position);
+/* Strikes at the weather's lightning rate, scattered around its storm cell. */
 void noise_thunder_next(noise_thunder *thunder, const noise_thunder_config *c,
                          noise_state *state, float *left, float *right);
 

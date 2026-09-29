@@ -6,10 +6,23 @@
 
 #include "audio_mailbox.h"
 
+/* Everything the control thread asks of the audio thread, sent whole. */
+typedef struct audio_request {
+  noise_config config;
+  uint32_t seed;
+  uint32_t reset_count;  /* The audio thread reinitializes when this changes. */
+  uint32_t strike_count; /* The audio thread starts `strike` when this changes. */
+  thunder_strike strike;
+} audio_request;
+
 struct audio_output {
   AudioUnit unit;
   audio_mailbox mailbox;
+  audio_request request_slots[3];
   audio_request request; /* Control thread's copy of what it last published. */
+  audio_mailbox status_mailbox; /* Render thread to control thread. */
+  noise_status status_slots[3];
+  noise_status status; /* Render thread's copy before publishing. */
   /* Render thread only. */
   noise_gen generator;
   uint32_t applied_reset_count;
@@ -56,6 +69,8 @@ static OSStatus render(void *context, AudioUnitRenderActionFlags *flags,
   const audio_request *request = audio_mailbox_take(&output->mailbox);
   if (request) apply_request(output, request);
   noise_fill(&output->generator, buffers->mBuffers[0].mData, frames);
+  noise_get_status(&output->generator, &output->status);
+  audio_mailbox_publish(&output->status_mailbox, &output->status);
   buffers->mBuffers[0].mDataByteSize = (UInt32)bytes;
   return noErr;
 }
@@ -100,7 +115,11 @@ OSStatus audio_output_create(audio_output **result, const noise_config *config, 
   }
   output->request.config = *config;
   output->request.seed = seed;
-  audio_mailbox_init(&output->mailbox, &output->request);
+  audio_mailbox_init(&output->mailbox, output->request_slots, sizeof(output->request),
+                     &output->request);
+  noise_get_status(&output->generator, &output->status);
+  audio_mailbox_init(&output->status_mailbox, output->status_slots, sizeof(noise_status),
+                     &output->status);
   OSStatus status = open_unit(output);
   if (status != noErr) {
     audio_output_destroy(output);
@@ -145,4 +164,11 @@ void audio_output_strike(audio_output *output, position_polar position) {
   output->request.strike.position = position;
   ++output->request.strike_count;
   audio_mailbox_publish(&output->mailbox, &output->request);
+}
+
+int audio_output_status(audio_output *output, noise_status *status) {
+  const noise_status *latest = audio_mailbox_take(&output->status_mailbox);
+  if (!latest) return 0;
+  *status = *latest;
+  return 1;
 }

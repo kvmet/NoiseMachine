@@ -20,6 +20,9 @@ typedef struct noise_cicada_config {
   float click_rate_scale; /* 0.5..1.5 times the species' tymbal click rate. */
   float chorus; /* Level of the distant chorus under the individuals. */
   noise_placement placement;
+  /* Weather the cicadas sing in. */
+  float min_temperature_c;
+  float max_rain_mm_h;
 } noise_cicada_config;
 
 /* One persistent cicada; its offsets scale with the live config at each call. */
@@ -44,6 +47,8 @@ typedef struct noise_cicada_voice {
 typedef struct noise_cicadas {
   uint32_t rng;
   unsigned started;
+  unsigned quiet; /* NOISE_QUIET_* flags; while any is set, no new calls and the chorus fades. */
+  float activity; /* Chorus level, gliding toward 0 while quiet and 1 otherwise. */
   noise_cicada_voice voice[NOISE_CICADA_VOICES];
   noise_resonator chorus[2]; /* Independent per ear. */
   float swell;
@@ -59,6 +64,9 @@ int noise_cicada_config_valid(const noise_cicada_config *c);
 void noise_cicada_config_default(noise_cicada_config *c);
 void noise_cicadas_init(noise_cicadas *cicadas, uint32_t seed);
 void noise_cicadas_configure(noise_cicadas *cicadas, const noise_cicada_config *c);
+/* Silences the cicadas when it is too cool or wet for the configuration. */
+void noise_cicadas_follow(noise_cicadas *cicadas, const noise_cicada_config *c,
+                          const noise_weather *weather);
 /* Returns the reverb send; the direct sound goes to the bus. */
 float noise_cicadas_next(noise_cicadas *cicadas, const noise_cicada_config *c,
                           const noise_listener_config *listener, noise_bus *bus);

@@ -3,12 +3,19 @@
 #include <assert.h>
 #include <math.h>
 
+static double ear_energy(unsigned channel) {
+  double energy = 0.0;
+  for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ; ++n) {
+    energy += (double)audio[2 * n + channel] * audio[2 * n + channel];
+  }
+  return energy;
+}
+
 static void test_wind(void) {
   noise_config c = silent_config();
   c.wind.gain = 0.5f;
-  c.wind.gust_depth = 0.0f;
-  c.wind.brightness = 0.2f;
   c.wind.stereo_width = 0.0f;
+  c.storm.fixed.wind_m_s = 5.0f;
   assert(noise_init(&a, &c, 17) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   int nonzero = 0;
@@ -17,16 +24,43 @@ static void test_wind(void) {
     assert(audio[2 * n] == audio[2 * n + 1]);
   }
   assert(nonzero);
-  double dark_high = band_power(6400);
+  double calm_ratio = band_power(6400) / band_power(200);
 
-  c.wind.brightness = 1.0f;
+  c.storm.fixed.wind_m_s = 30.0f;
   assert(noise_init(&a, &c, 17) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
-  assert(band_power(6400) > 20.0 * dark_high);
+  assert(band_power(6400) / band_power(200) > 20.0 * calm_ratio);
+  assert(a.state.clipped_samples == 0);
+
+  /* Level follows the square of speed, reaching the gain at 20 m/s. */
+  c.storm.fixed.wind_m_s = 10.0f;
+  assert(noise_init(&a, &c, 17) == NOISE_OK);
+  float expected = 0.5f * powf(a.state.weather.wind_m_s / 20.0f, 2.0f);
+  assert(fabsf(a.wind.target[0] - expected) < 1e-6f && a.wind.target[1] == a.wind.target[0]);
+
+  /* Wind from the right is louder in the right ear. */
+  c.storm.fixed.wind_bearing_rad = 0.5f * (float)TEST_PI;
+  assert(noise_init(&a, &c, 17) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  assert(ear_energy(1) > 2.0 * ear_energy(0));
+
+  /* Balance zero keeps both ears level whatever the bearing. */
+  c.wind.balance = 0.0f;
+  assert(noise_init(&a, &c, 17) == NOISE_OK);
+  assert(a.wind.target[0] == a.wind.target[1]);
+  c.wind.balance = 0.5f;
+
+  /* Brightness scales the cutoff the speed sets. */
+  float alpha = a.wind.air_alpha;
+  c.wind.brightness = 2.0f;
+  assert(noise_init(&a, &c, 17) == NOISE_OK);
+  float cutoff = -logf(1.0f - alpha) * NOISE_SAMPLE_RATE_HZ / (2.0f * (float)TEST_PI);
+  float doubled = -logf(1.0f - a.wind.air_alpha) * NOISE_SAMPLE_RATE_HZ / (2.0f * (float)TEST_PI);
+  assert(fabsf(doubled / cutoff - 2.0f) < 1e-3f);
+  c.wind.brightness = 1.0f;
 
   c.wind.stereo_width = 1.0f;
-  c.wind.gust_depth = 1.0f;
-  c.wind.gust_rate_hz = 2.0f;
+  c.storm.fixed.wind_bearing_rad = 0.0f;
   assert(noise_init(&a, &c, 17) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   int stereo = 0;
@@ -34,8 +68,6 @@ static void test_wind(void) {
     stereo |= audio[2 * n] != audio[2 * n + 1];
   }
   assert(stereo);
-  assert(a.wind.gust != 0.5f);
-  assert(a.state.clipped_samples == 0);
 }
 
 void run_wind_tests(void) {

@@ -6,7 +6,7 @@
 static void test_cricket_levels(void) {
   noise_config c = silent_config();
   c.crickets.gain = 0.7f;
-  c.crickets.call_rate_hz = 1.0f;
+  set_cricket_rate(&c, 1.0f);
   c.crickets.pitch_variation = 0.0f;
   c.crickets.placement.stereo_width = 0.0f;
   assert(noise_init(&a, &c, 29) == NOISE_OK);
@@ -31,7 +31,7 @@ static void test_cricket_levels(void) {
 static void test_cricket_rhythm(void) {
   noise_config c = silent_config();
   c.crickets.gain = 0.5f;
-  c.crickets.call_rate_hz = 2.0f;
+  set_cricket_rate(&c, 2.0f);
   c.crickets.pitch_variation = 1.0f;
   c.crickets.placement.stereo_width = 1.0f;
   assert(noise_init(&a, &c, 5) == NOISE_OK);
@@ -40,7 +40,7 @@ static void test_cricket_rhythm(void) {
   double shortest[NOISE_CRICKET_VOICES], longest[NOISE_CRICKET_VOICES] = {0};
   for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) shortest[i] = INFINITY;
   unsigned intervals = 0, singing = 0, checks = 0;
-  double gap = 1.5 * 1.1 * NOISE_SAMPLE_RATE_HZ / c.crickets.call_rate_hz;
+  double gap = 1.5 * 1.1 * NOISE_SAMPLE_RATE_HZ / a.crickets.call_rate_hz;
   for (uint32_t n = 1; n <= 600u * NOISE_SAMPLE_RATE_HZ; ++n) {
     int16_t frame[2];
     noise_fill(&a, frame, 1);
@@ -75,7 +75,7 @@ static void test_cricket_rhythm(void) {
 static void test_cricket_pitch(void) {
   noise_config c = silent_config();
   c.crickets.gain = 0.5f;
-  c.crickets.call_rate_hz = 2.0f;
+  set_cricket_rate(&c, 2.0f);
   c.crickets.pitch_variation = 1.0f;
   c.crickets.placement.stereo_width = 0.0f;
   assert(noise_init(&a, &c, 7) == NOISE_OK);
@@ -147,7 +147,7 @@ static double cricket_energy(noise_config c, unsigned seconds) {
 static void test_cricket_space(void) {
   noise_config c = silent_config();
   c.crickets.gain = 1.0f;
-  c.crickets.call_rate_hz = 2.0f;
+  set_cricket_rate(&c, 2.0f);
   c.crickets.placement.stereo_width = 0.0f;
   c.crickets.placement.min_distance_m = 2.0f;
   c.crickets.placement.max_distance_m = 2.0f;

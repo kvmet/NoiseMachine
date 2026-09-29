@@ -16,11 +16,56 @@ typedef enum gui_control_id {
   CONTROL_STEREO_WIDTH,
   CONTROL_HEAD,
   CONTROL_REAR,
+  CONTROL_STORM_TIME_SCALE,
+  CONTROL_STORM_TEMPERATURE,
+  CONTROL_STORM_MIN_SEVERITY,
+  CONTROL_STORM_MAX_SEVERITY,
+  CONTROL_STORMS_PER_HOUR,
+  CONTROL_STORM_CELL_SPEED,
+  CONTROL_STORM_BREEZE,
+  /* Weather held while storm.manual is set. */
+  CONTROL_FIXED_RAIN,
+  CONTROL_FIXED_WIND,
+  CONTROL_FIXED_WIND_BEARING,
+  CONTROL_FIXED_TEMPERATURE,
+  CONTROL_FIXED_LIGHTNING,
+  CONTROL_FIXED_CELL_DISTANCE,
+  CONTROL_FIXED_CELL_BEARING,
+  /* Storm shape; like the storm controls above, used only while simulating. */
+  CONTROL_SHAPE_PEAK_RAIN_MIN,
+  CONTROL_SHAPE_PEAK_RAIN_MAX,
+  CONTROL_SHAPE_CORE_ALONG,
+  CONTROL_SHAPE_CORE_ACROSS,
+  CONTROL_SHAPE_TAIL_SHARE,
+  CONTROL_SHAPE_TAIL_LENGTH,
+  CONTROL_SHAPE_TAIL_WIDTH,
+  CONTROL_SHAPE_FRONT_MIN,
+  CONTROL_SHAPE_FRONT_MAX,
+  CONTROL_SHAPE_FRONT_EDGE,
+  CONTROL_SHAPE_OUTFLOW_MIN,
+  CONTROL_SHAPE_OUTFLOW_MAX,
+  CONTROL_SHAPE_OUTFLOW_DECAY,
+  CONTROL_SHAPE_OUTFLOW_WIDTH,
+  CONTROL_SHAPE_COOLING_MIN,
+  CONTROL_SHAPE_COOLING_MAX,
+  CONTROL_SHAPE_COOLING_DECAY,
+  CONTROL_SHAPE_COOLING_WIDTH,
+  CONTROL_SHAPE_COOLING_TIME,
+  CONTROL_SHAPE_WARMING_TIME,
+  CONTROL_SHAPE_LIGHTNING_MIN,
+  CONTROL_SHAPE_LIGHTNING_MAX,
+  CONTROL_SHAPE_BUILD,
+  CONTROL_SHAPE_DECAY,
+  CONTROL_SHAPE_APPROACH,
+  CONTROL_SHAPE_MISS,
+  CONTROL_SHAPE_HEADING_SPREAD,
+  CONTROL_GUST_INTENSITY,
+  CONTROL_GUST_TIME,
   CONTROL_WIND_GAIN,
-  CONTROL_WIND_BRIGHTNESS,
-  CONTROL_WIND_GUST_DEPTH,
-  CONTROL_WIND_GUST_RATE,
   CONTROL_WIND_WIDTH,
+  CONTROL_WIND_BRIGHTNESS,
+  CONTROL_WIND_RUMBLE,
+  CONTROL_WIND_BALANCE,
   CONTROL_CRICKET_GAIN,
   CONTROL_CRICKET_CALL_RATE,
   CONTROL_CRICKET_PITCH,
@@ -28,6 +73,9 @@ typedef enum gui_control_id {
   CONTROL_CRICKET_WIDTH,
   CONTROL_CRICKET_MIN_DISTANCE,
   CONTROL_CRICKET_MAX_DISTANCE,
+  CONTROL_CRICKET_MIN_TEMPERATURE,
+  CONTROL_CRICKET_MAX_RAIN,
+  CONTROL_CRICKET_MAX_WIND,
   CONTROL_CICADA_GAIN,
   CONTROL_CICADA_PITCH,
   CONTROL_CICADA_CLICK_RATE,
@@ -35,25 +83,19 @@ typedef enum gui_control_id {
   CONTROL_CICADA_WIDTH,
   CONTROL_CICADA_MIN_DISTANCE,
   CONTROL_CICADA_MAX_DISTANCE,
+  CONTROL_CICADA_MIN_TEMPERATURE,
+  CONTROL_CICADA_MAX_RAIN,
   CONTROL_THUNDER_GAIN,
-  CONTROL_THUNDER_RATE,
-  CONTROL_THUNDER_MIN_DISTANCE,
-  CONTROL_THUNDER_MAX_DISTANCE,
   CONTROL_THUNDER_REVERB_GAIN,
   CONTROL_THUNDER_REVERB_DECAY,
-  CONTROL_RAIN_INTENSITY,
-  CONTROL_MIN_INTENSITY,
-  CONTROL_MAX_INTENSITY,
-  CONTROL_WEATHER_STEP,
-  CONTROL_RAIN_SLEW,
+  CONTROL_THUNDER_SCATTER,
   CONTROL_RAIN_GAIN,
+  CONTROL_BED_GAIN,
   CONTROL_DROP_RATE,
-  CONTROL_FALL_HEIGHT,
   CONTROL_RAIN_MIN_DISTANCE,
   CONTROL_RAIN_MAX_DISTANCE,
   /* Fields of the selected surface. */
-  CONTROL_SURFACE_WEIGHT,
-  CONTROL_SURFACE_WEIGHT_MOD,
+  CONTROL_SURFACE_COVERAGE,
   CONTROL_CLICK_GAIN_MIN,
   CONTROL_CLICK_GAIN_MAX,
   CONTROL_CLICK_FREQUENCY_MIN,
@@ -75,8 +117,7 @@ typedef enum gui_control_id {
   CONTROL_BUBBLE_DECAY_MIN,
   CONTROL_BUBBLE_DECAY_MAX,
   CONTROL_BUBBLE_DELAY,
-  CONTROL_WEATHER_MOD,
-  CONTROL_COUNT = CONTROL_WEATHER_MOD + NOISE_WEATHER_MOD_COUNT
+  CONTROL_COUNT
 } gui_control_id;
 
 typedef enum gui_scale {
@@ -116,14 +157,12 @@ const char *gui_control_set(noise_config *config, unsigned surface, gui_control_
                             float value);
 /* Surface list edits. Each keeps a valid config valid and returns a note for the
    user when it changes less than asked, or NULL. */
-/* Appends a copy of surface from with weight and weight_mod zero. */
+/* Appends a copy of surface from with coverage zero. */
 const char *gui_surface_add(noise_config *config, unsigned from);
 /* Removes surface and shifts later ones down. */
 const char *gui_surface_delete(noise_config *config, unsigned surface);
 /* Stores name, shortened at a UTF-8 character boundary to fit. */
 const char *gui_surface_rename(noise_config *config, unsigned surface, const char *name);
-/* Turns weather variation on or off, clamping intensity into its bounds. */
-void gui_set_vary(noise_config *config, int vary);
 
 void gui_slider_range(gui_control_id id, double *minimum, double *maximum);
 double gui_slider_position(gui_control_id id, float value);
@@ -133,5 +172,25 @@ void gui_control_format(gui_control_id id, float value, char *text, size_t size)
 /* Reads a shown value. Returns 0 and leaves value unchanged unless text is one
    finite number. */
 int gui_control_parse(gui_control_id id, const char *text, float *value);
+
+/* Layers whose sound the weather adjusts. */
+typedef enum gui_layer {
+  GUI_LAYER_RAIN,
+  GUI_LAYER_BED,
+  GUI_LAYER_WIND,
+  GUI_LAYER_CRICKETS,
+  GUI_LAYER_CICADAS,
+  GUI_LAYER_THUNDER,
+  GUI_LAYER_COUNT
+} gui_layer;
+
+/* One line on what the weather is doing to layer. */
+void gui_layer_status(gui_layer layer, const noise_status *status, const noise_config *config,
+                      char *text, size_t size);
+/* One line of the current weather. */
+void gui_weather_summary(const noise_status *status, char *text, size_t size);
+/* Names each audible layer the weather silences, with its reasons; empty when none. */
+void gui_silenced_summary(const noise_status *status, const noise_config *config,
+                          char *text, size_t size);
 
 #endif

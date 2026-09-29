@@ -32,19 +32,15 @@ enum { FADE_NONE, FADE_BOTH_ENDS, FADE_TIP_END };
 
 int noise_thunder_config_valid(const noise_thunder_config *c) {
   return in_range(c->gain, 0.0f, 1.0f) &&
-         in_range(c->rate_per_min, 0.0f, 20.0f) &&
-         in_range(c->min_distance_m, 200.0f, 15000.0f) &&
-         in_range(c->max_distance_m, c->min_distance_m, 15000.0f) &&
          in_range(c->reverb_gain, 0.0f, 1.0f) &&
-         in_range(c->reverb_decay_s, 0.5f, 10.0f);
+         in_range(c->reverb_decay_s, 0.5f, 10.0f) &&
+         in_range(c->scatter_m, 0.0f, 10000.0f);
 }
 
 void noise_thunder_config_default(noise_thunder_config *c) {
-  c->rate_per_min = 2.0f;
-  c->min_distance_m = 1000.0f;
-  c->max_distance_m = 8000.0f;
   c->reverb_gain = 0.5f;
   c->reverb_decay_s = 3.5f;
+  c->scatter_m = 4000.0f;
 }
 
 void noise_thunder_init(noise_thunder *thunder, uint32_t seed) {
@@ -397,21 +393,24 @@ static void thunder_reverb_next(noise_thunder_reverb *reverb, float send, float 
 
 void noise_thunder_next(noise_thunder *thunder, const noise_thunder_config *c,
                          noise_state *state, float *left, float *right) {
-  if (c->gain > 0.0f && c->rate_per_min > 0.0f) {
+  float rate_per_min = state->weather.lightning_per_min;
+  if (c->gain > 0.0f && rate_per_min > 0.0f) {
     int trigger = !thunder->started;
     thunder->started = 1;
     if (!trigger) {
       /* 32-bit comparison resolves rates far below 0.01 strikes/min. */
-      float probability = c->rate_per_min / (60.0f * NOISE_SAMPLE_RATE_HZ);
+      float probability = rate_per_min / (60.0f * NOISE_SAMPLE_RATE_HZ);
       trigger = random_u32(&thunder->rng) < (uint32_t)(probability * 4294967296.0f);
     }
     if (trigger) {
-      position_polar position;
-      position.distance_m = area_uniform_distance(c->min_distance_m, c->max_distance_m,
-                                                   random_unit(&thunder->rng));
-      position.angle_rad = 2.0f * NOISE_PI * random_unit(&thunder->rng);
+      const position_polar *cell = &state->weather.cell;
+      float x = cell->distance_m * sinf(cell->angle_rad) +
+                c->scatter_m * random_gaussian(&thunder->rng);
+      float y = cell->distance_m * cosf(cell->angle_rad) +
+                c->scatter_m * random_gaussian(&thunder->rng);
+      position_polar position = {fmaxf(200.0f, hypotf(x, y)), atan2f(x, y)};
       /* Capacity losses are recorded by noise_thunder_start for both paths. */
-      (void)noise_thunder_start(thunder, state, position);
+      if (position.distance_m <= NOISE_THUNDER_MAX_DISTANCE_M) (void)noise_thunder_start(thunder, state, position);
     }
   }
   float sum[2] = {0.0f, 0.0f};

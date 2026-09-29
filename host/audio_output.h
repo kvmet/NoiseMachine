@@ -22,5 +22,8 @@ noise_result audio_output_set_config(audio_output *output, const noise_config *c
 void audio_output_reset(audio_output *output, uint32_t seed);
 /* position must be inside the range noise_trigger_thunder accepts. */
 void audio_output_strike(audio_output *output, position_polar position);
+/* Copies the status after the last render into status. Returns 0 and leaves status
+   unchanged when nothing rendered since the last call. */
+int audio_output_status(audio_output *output, noise_status *status);
 
 #endif

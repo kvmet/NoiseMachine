@@ -16,8 +16,13 @@ noise_config silent_config(void) {
   return c;
 }
 
-void clear_surface_weights(noise_config *c) {
-  for (unsigned i = 0; i < c->rain.surface_count; ++i) c->rain.surface[i].weight = 0.0f;
+void clear_surface_coverage(noise_config *c) {
+  for (unsigned i = 0; i < c->rain.surface_count; ++i) c->rain.surface[i].coverage = 0.0f;
+}
+
+void set_cricket_rate(noise_config *c, float hz) {
+  c->crickets.call_rate_scale = 0.5f;
+  c->storm.fixed.temperature_c = (60.0f * hz / 0.5f + 32.0f) / 7.2f;
 }
 
 droplet water_drop(void) {

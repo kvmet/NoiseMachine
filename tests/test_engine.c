@@ -15,24 +15,56 @@ static void test_validation(void) {
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   assert(memcmp(&a, &b, sizeof(a)) == 0);
   c = silent_config();
-  c.rain.surface[WATER].weight = -1.0f;
+  c.rain.surface[WATER].coverage = -1.0f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  clear_surface_weights(&c);
+  clear_surface_coverage(&c);
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.weather.vary = 1;
+  c.storm.manual = 2;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
-  c.weather.intensity = 0.5f;
-  c.weather.min_intensity = 0.9f;
+  c = silent_config();
+  c.storm.min_severity = 0.9f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.storm.time_scale = 0.5f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.storm.shape.build_share = 0.7f;
+  c.storm.shape.decay_share = 0.4f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.storm.shape.peak_rain_min_mm_h = 200.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.storm.gust_time_s = 0.4f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.rain.bed_gain = 4.1f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.wind.balance = 1.1f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.crickets.max_wind_m_s = 41.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.cicadas.min_temperature_c = NAN;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.thunder.scatter_m = -1.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.storm.fixed.rain_mm_h = 201.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.storm.fixed.cell.distance_m = 100.0f;
+  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
+  c = silent_config();
+  c.storm.fixed.temperature_c = NAN;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
   c.rain.max_drops_per_s = INFINITY;
-  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
-  c = silent_config();
-  c.weather.mod_amount[WEATHER_MOD_REVERB_GAIN] = 1.01f;
-  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
-  c.weather.mod_amount[WEATHER_MOD_REVERB_GAIN] = NAN;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
   c.rain.surface[WATER].click_gain_min = 0.6f;
@@ -55,13 +87,13 @@ static void test_validation(void) {
   c.rain.surface[DIRT].click_frequency_max_hz = 900.0f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.wind.gust_rate_hz = 0.0f;
+  c.wind.gain = 1.01f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
   c.wind.stereo_width = 1.01f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.crickets.call_rate_hz = 0.0f;
+  c.crickets.call_rate_scale = 0.0f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
   c.crickets.pitch_hz = 8001.0f;
@@ -98,9 +130,8 @@ static void test_silence_and_chunks(void) {
   assert(memcmp(&a, &b, sizeof(a)) == 0);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   for (unsigned i = 0; i < 2 * NOISE_SAMPLE_RATE_HZ; ++i) assert(audio[i] == 0);
-  c.weather.intensity = 0.7f;
-  c.weather.vary = 1;
-  c.weather.step_s = 0.1f;
+  c.storm.manual = 0;
+  c.storm.time_scale = 600.0f;
   c.reverb_gain = 0.2f;
   c.ambient_gain[NOISE_KIND_PINK] = 0.2f;
   c.ambient_gain[NOISE_KIND_HUM_60HZ] = 0.1f;
@@ -132,7 +163,7 @@ static void test_silence_and_chunks(void) {
 
 static void test_random_stream_separation(void) {
   noise_config c = silent_config();
-  c.weather.intensity = 1.0f;
+  c.storm.fixed.rain_mm_h = 10.0f;
   c.ambient_gain[NOISE_KIND_WHITE] = 0.1f;
   assert(noise_init(&a, &c, 1) == NOISE_OK);
   unsigned adjacent_matches = 0;
@@ -169,15 +200,14 @@ static void test_set_config(void) {
   c.cicadas.gain = 0.3f;
   c.thunder.gain = 0.5f;
   c.thunder.reverb_gain = 0.5f;
-  c.weather.vary = 1;
-  c.weather.intensity = 0.5f;
+  c.storm.manual = 0;
   assert(noise_init(&a, &c, 5) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ / 2);
 
   /* Rejection leaves the engine untouched. */
   b = a;
   noise_config bad = c;
-  bad.weather.min_intensity = 0.9f;
+  bad.storm.min_severity = 0.9f;
   assert(noise_set_config(&a, &bad) == NOISE_INVALID_CONFIG);
   assert(noise_set_config(&a, NULL) == NOISE_INVALID_CONFIG);
   assert(noise_set_config(NULL, &c) == NOISE_INVALID_CONFIG);
@@ -193,17 +223,15 @@ static void test_set_config(void) {
 
   /* A live change matches a fresh engine for every configuration-derived coefficient. */
   noise_config live = c;
-  live.wind.brightness = 0.9f;
-  live.wind.gust_rate_hz = 1.5f;
+  live.storm.manual = 1;
+  live.storm.fixed.rain_mm_h = 30.0f;
   live.cicadas.pitch_hz = 8000.0f;
   live.cicadas.species = CICADA_HIGURASHI;
   live.thunder.reverb_decay_s = 9.0f;
-  live.rain.surface[GLASS].weight = 5.0f;
-  live.weather.step_s = 1.0f;
-  live.weather.slew_s = 0.1f;
+  live.rain.surface[GLASS].coverage = 5.0f;
+  live.rain.max_distance_m = 20.0f;
   assert(noise_set_config(&a, &live) == NOISE_OK);
   assert(noise_init(&b, &live, 5) == NOISE_OK);
-  assert(a.wind.air_alpha == b.wind.air_alpha && a.wind.gust_alpha == b.wind.gust_alpha);
   /* Higurashi body Q 30 halves to a chorus Q of 15. */
   double chorus_radius = exp(-TEST_PI * 8000.0 / (15.0 * NOISE_SAMPLE_RATE_HZ));
   double chorus_coefficient = 2.0 * chorus_radius * cos(2.0 * TEST_PI * 8000.0 /
@@ -216,35 +244,19 @@ static void test_set_config(void) {
   assert(memcmp(a.thunder.reverb.fdn.feedback, b.thunder.reverb.fdn.feedback,
                 sizeof(a.thunder.reverb.fdn.feedback)) == 0);
   assert(memcmp(a.rain.surface_cdf, b.rain.surface_cdf, sizeof(a.rain.surface_cdf)) == 0);
-  assert(a.weather.period == b.weather.period && a.weather.slew == b.weather.slew);
-  /* 1.5 s elapsed exceeds the new 1 s step, so the step counter restarts. */
-  assert(a.weather.samples < a.weather.period);
+  /* Manual weather applies at once, without waiting for the next weather update. */
+  assert(a.state.weather.rain_mm_h == 30.0f);
+  assert(memcmp(a.rain.size_cdf, b.rain.size_cdf, sizeof(a.rain.size_cdf)) == 0);
+  assert(a.rain.arrival_probability == b.rain.arrival_probability);
+  assert(a.rain.near_m == b.rain.near_m && a.rain.bed.ratio == b.rain.bed.ratio);
 
-  /* Narrowed bounds hold the current intensity without restarting the controller. */
-  noise_config narrow = live;
-  narrow.weather.min_intensity = 0.45f;
-  narrow.weather.max_intensity = 0.5f;
-  a.state.rain_intensity = 0.6f;
-  a.state.rain_target = 0.3f;
-  a.weather.samples = 7;
-  assert(noise_set_config(&a, &narrow) == NOISE_OK);
-  assert(a.state.rain_intensity == 0.5f && a.state.rain_target == 0.45f);
-  assert(a.weather.samples == 7);
-
-  /* A new intensity restarts there, in the nearest Markov state. */
-  narrow.weather.intensity = 0.45f;
-  assert(noise_set_config(&a, &narrow) == NOISE_OK);
-  assert(a.state.rain_intensity == 0.45f && a.state.rain_target == 0.45f);
-  assert(a.state.weather_state == 0 && a.weather.samples == 0);
-
-  /* Fixed intensity follows the configuration directly. */
-  noise_config fixed = narrow;
-  fixed.weather.vary = 0;
-  fixed.weather.intensity = 0.8f;
-  assert(noise_set_config(&a, &fixed) == NOISE_OK);
-  assert(a.state.rain_intensity == 0.8f && a.state.rain_target == 0.8f);
-  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
-  assert(a.state.rain_intensity == 0.8f);
+  /* A new climate temperature shifts the simulated temperature by the same amount. */
+  noise_config warm = c;
+  assert(noise_set_config(&a, &warm) == NOISE_OK);
+  float before = a.state.weather.temperature_c;
+  warm.storm.temperature_c += 4.0f;
+  assert(noise_set_config(&a, &warm) == NOISE_OK);
+  assert(fabsf(a.state.weather.temperature_c - (before + 4.0f)) < 1e-4f);
 }
 
 void run_engine_tests(void) {

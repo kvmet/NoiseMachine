@@ -10,23 +10,40 @@
 
 int noise_cricket_config_valid(const noise_cricket_config *c) {
   return in_range(c->gain, 0.0f, 1.0f) &&
-         in_range(c->call_rate_hz, 0.05f, 10.0f) &&
+         in_range(c->call_rate_scale, 0.1f, 2.0f) &&
          in_range(c->pitch_hz, 2000.0f, 8000.0f) &&
          in_range(c->pitch_variation, 0.0f, 1.0f) &&
+         in_range(c->min_temperature_c, -10.0f, 45.0f) &&
+         in_range(c->max_rain_mm_h, 0.0f, 200.0f) &&
+         in_range(c->max_wind_m_s, 0.0f, 40.0f) &&
          noise_placement_valid(&c->placement);
 }
 
 void noise_cricket_config_default(noise_cricket_config *c) {
-  c->call_rate_hz = 1.2f;
+  c->call_rate_scale = 0.5f;
   c->pitch_hz = 4500.0f;
   c->pitch_variation = 0.35f;
   c->placement.stereo_width = 0.8f;
   c->placement.min_distance_m = 2.0f;
   c->placement.max_distance_m = 15.0f;
+  c->min_temperature_c = 13.0f;
+  c->max_rain_mm_h = 0.5f;
+  c->max_wind_m_s = 8.0f;
 }
 
 void noise_crickets_init(noise_crickets *crickets, uint32_t seed) {
   crickets->rng = stream_seed(seed, 0xb54cda58u);
+}
+
+void noise_crickets_follow(noise_crickets *crickets, const noise_cricket_config *c,
+                           const noise_weather *weather) {
+  float t = weather->temperature_c;
+  /* Dolbear's law: chirps per minute = 4 T_F - 160, which is 7.2 T_C - 32. */
+  float rate = c->call_rate_scale * (7.2f * t - 32.0f) / 60.0f;
+  crickets->call_rate_hz = fminf(10.0f, fmaxf(0.05f, rate));
+  crickets->quiet = (t < c->min_temperature_c ? NOISE_QUIET_COLD : 0u) |
+                    (weather->rain_mm_h > c->max_rain_mm_h ? NOISE_QUIET_RAIN : 0u) |
+                    (weather->wind_mean_m_s > c->max_wind_m_s ? NOISE_QUIET_WIND : 0u);
 }
 
 static uint32_t cricket_bout(uint32_t *rng, unsigned singing) {
@@ -65,16 +82,17 @@ static void cricket_place(noise_cricket_voice *voice, const noise_cricket_config
 }
 
 /* Returns the reverb send; the direct sound goes through the spatial model. */
-static float cricket_next(uint32_t *rng, noise_cricket_voice *voice,
+static float cricket_next(noise_crickets *crickets, noise_cricket_voice *voice,
                           const noise_cricket_config *c,
                           const noise_listener_config *listener, noise_bus *bus) {
+  uint32_t *rng = &crickets->rng;
   if (--voice->bout_samples == 0) {
     voice->singing = !voice->singing;
     voice->bout_samples = cricket_bout(rng, voice->singing);
   }
   if (voice->until_chirp == 0) {
-    voice->until_chirp = cricket_period(rng, voice, c->call_rate_hz);
-    if (voice->singing) {
+    voice->until_chirp = cricket_period(rng, voice, crickets->call_rate_hz);
+    if (voice->singing && !crickets->quiet) {
       voice->chirp_samples = 0;
       cricket_place(voice, c, listener);
     }
@@ -114,7 +132,7 @@ float noise_crickets_next(noise_crickets *crickets, const noise_cricket_config *
   if (!crickets->started) {
     crickets->started = 1;
     for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) {
-      cricket_init(&crickets->rng, &crickets->voice[i], c->call_rate_hz);
+      cricket_init(&crickets->rng, &crickets->voice[i], crickets->call_rate_hz);
       cricket_place(&crickets->voice[i], c, listener);
     }
     /* The layer is audible from its first frame. */
@@ -123,7 +141,7 @@ float noise_crickets_next(noise_crickets *crickets, const noise_cricket_config *
   }
   float send = 0.0f;
   for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) {
-    send += cricket_next(&crickets->rng, &crickets->voice[i], c, listener, bus);
+    send += cricket_next(crickets, &crickets->voice[i], c, listener, bus);
   }
   return send;
 }

@@ -32,8 +32,8 @@ static void test_bubble_physics(void) {
   int16_t frame[2];
   for (unsigned n = 0; n < delay + 120; ++n) {
     double t = n > delay ? (double)(n - delay) / NOISE_SAMPLE_RATE_HZ : 0.0;
-    double expected = 0.07 * exp(-damping * t) * sin(2.0 * TEST_PI * frequency * t);
-    assert(fabs(a.rain.voice[0].mode[NOISE_DROP_BUBBLE].current - expected) < 2e-6);
+    double expected = 0.00875 * exp(-damping * t) * sin(2.0 * TEST_PI * frequency * t);
+    assert(fabs(a.rain.voice[0].mode[NOISE_DROP_BUBBLE].current - expected) < 2.5e-7);
     noise_fill(&a, frame, 1);
   }
   assert(noise_init(&b, &c, 1) == NOISE_OK);
@@ -78,10 +78,10 @@ static void test_water_controls(void) {
 
 static void test_automatic_water_bubbles(void) {
   noise_config c = silent_config();
-  c.weather.intensity = 1.0f;
+  c.storm.fixed.rain_mm_h = 10.0f;
   c.rain.max_drops_per_s = 2000.0f;
-  clear_surface_weights(&c);
-  c.rain.surface[WATER].weight = 1.0f;
+  clear_surface_coverage(&c);
+  c.rain.surface[WATER].coverage = 1.0f;
   c.rain.surface[WATER].bubble_probability = 1.0f;
   c.rain.surface[WATER].bubble_radius_min_m = 0.0006f;
   c.rain.surface[WATER].bubble_radius_max_m = 0.0012f;
@@ -156,23 +156,19 @@ static void test_surface_list(void) {
   c = silent_config();
   memset(c.rain.surface[METAL].name, 'x', sizeof(c.rain.surface[METAL].name));
   assert(!noise_config_valid(&c));
-  c = silent_config();
-  c.rain.surface[METAL].weight_mod = 1.5f;
-  assert(!noise_config_valid(&c));
 
   /* Entries past the count are neither validated nor chosen. */
   noise_config short_list = silent_config();
-  short_list.weather.intensity = 1.0f;
+  short_list.storm.fixed.rain_mm_h = 10.0f;
   short_list.rain.max_drops_per_s = 2000.0f;
   short_list.rain.surface_count = 1;
-  for (unsigned i = 1; i < NOISE_MAX_SURFACES; ++i) short_list.rain.surface[i].weight = 5.0f;
-  short_list.rain.surface[DIRT].weight_mod = 1.0f;
+  for (unsigned i = 1; i < NOISE_MAX_SURFACES; ++i) short_list.rain.surface[i].coverage = 5.0f;
   short_list.rain.surface[LEAF].lowpass_hz = NAN;
   noise_config water_only = short_list;
   water_only.rain.surface_count = NOISE_MAX_SURFACES;
   for (unsigned i = 1; i < NOISE_MAX_SURFACES; ++i) {
     water_only.rain.surface[i] = water_only.rain.surface[WATER];
-    water_only.rain.surface[i].weight = 0.0f;
+    water_only.rain.surface[i].coverage = 0.0f;
   }
   static int16_t reference[2 * NOISE_SAMPLE_RATE_HZ];
   assert(noise_init(&a, &short_list, 17) == NOISE_OK);
@@ -190,14 +186,15 @@ static void test_surface_list(void) {
 }
 
 /* Share of voice-samples on unfiltered surface 0 against its filtered copy, surface 1. */
-static double unfiltered_share(float weight_mod) {
+static double unfiltered_share(float coverage) {
   noise_config c = silent_config();
-  c.weather.intensity = 1.0f;
+  c.storm.fixed.rain_mm_h = 10.0f;
   c.rain.max_drops_per_s = 2000.0f;
   c.rain.surface_count = 2;
   c.rain.surface[1] = c.rain.surface[WATER];
   c.rain.surface[1].lowpass_hz = 20000.0f;
-  c.rain.surface[WATER].weight_mod = weight_mod;
+  c.rain.surface[WATER].coverage = coverage;
+  c.rain.surface[1].coverage = 1.0f;
   assert(noise_init(&a, &c, 23) == NOISE_OK);
   unsigned long unfiltered = 0, total = 0;
   int16_t frame[2];
@@ -212,19 +209,19 @@ static double unfiltered_share(float weight_mod) {
   return (double)unfiltered / (double)total;
 }
 
-static void test_surface_weight_mod(void) {
-  /* At full intensity the scale is 1 + weight_mod, floored at 0.001. */
-  assert(fabs(unfiltered_share(0.0f) - 0.5) < 0.1);
-  assert(fabs(unfiltered_share(1.0f) - 2.0 / 3.0) < 0.1);
-  assert(unfiltered_share(-1.0f) < 0.01);
+/* Arrivals split by each surface's share of the ground. */
+static void test_surface_coverage(void) {
+  assert(fabs(unfiltered_share(1.0f) - 0.5) < 0.1);
+  assert(fabs(unfiltered_share(2.0f) - 2.0 / 3.0) < 0.1);
+  assert(unfiltered_share(0.0f) == 0.0);
 }
 
 static void test_bubble_on_solid(void) {
   noise_config c = silent_config();
-  clear_surface_weights(&c);
-  c.weather.intensity = 1.0f;
+  clear_surface_coverage(&c);
+  c.storm.fixed.rain_mm_h = 10.0f;
   c.rain.max_drops_per_s = 2000.0f;
-  c.rain.surface[METAL].weight = 1.0f;
+  c.rain.surface[METAL].coverage = 1.0f;
   c.rain.surface[METAL].bubble_probability = 1.0f;
   assert(noise_init(&a, &c, 61) == NOISE_OK);
   int16_t frame[2];
@@ -293,7 +290,7 @@ void run_rain_tests(void) {
   test_automatic_water_bubbles();
   test_roof_surfaces();
   test_surface_list();
-  test_surface_weight_mod();
+  test_surface_coverage();
   test_bubble_on_solid();
   test_custom_click();
   test_lifetimes_and_capacity();

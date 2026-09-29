@@ -11,7 +11,7 @@ int main(void) {
   run_thunder_tests();
   run_rain_tests();
   run_spatial_tests();
-  run_weather_tests();
+  run_storm_tests();
   run_reverb_tests();
   printf("core checks passed; engine size: %zu bytes\n", sizeof(noise_gen));
   return 0;

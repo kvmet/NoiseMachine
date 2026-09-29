@@ -19,6 +19,11 @@ static void test_spatial_geometry(void) {
   noise_config c = silent_config();
   c.listener.head_amount = 0.0f;
   c.listener.rear_amount = 0.0f;
+  /* A loud drop keeps int16 rounding out of the phase measurement. */
+  c.rain.surface[WATER].click_gain_min = 2.0f;
+  c.rain.surface[WATER].click_gain_max = 2.0f;
+  c.rain.surface[WATER].bubble_gain_min = 8.0f;
+  c.rain.surface[WATER].bubble_gain_max = 8.0f;
   droplet drop = water_drop();
   drop.position.distance_m = 2.0f;
   drop.position.angle_rad = (float)(TEST_PI / 2.0);
@@ -80,8 +85,10 @@ static void test_spatial_geometry(void) {
 
 static void test_spatial_bypass_and_distance(void) {
   noise_config c = silent_config();
-  c.rain.surface[WATER].click_gain_min = 1.0f;
-  c.rain.surface[WATER].click_gain_max = 1.0f;
+  c.rain.surface[WATER].click_gain_min = 2.0f;
+  c.rain.surface[WATER].click_gain_max = 2.0f;
+  c.rain.surface[WATER].bubble_gain_min = 8.0f;
+  c.rain.surface[WATER].bubble_gain_max = 8.0f;
   c.rain.surface[WATER].bubble_decay_min = 1.0f;
   c.rain.surface[WATER].bubble_decay_max = 1.0f;
   c.listener.stereo_width_m = 0.0f;

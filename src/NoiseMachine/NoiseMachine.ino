@@ -12,8 +12,7 @@ void setup() {
   noise_config config;
   noise_config_default(&config);
   config.ambient_gain[NOISE_KIND_PINK] = 0.0f;
-  config.weather.intensity = 0.5f;
-  config.weather.vary = 1;
+  config.storm.manual = 0;
   noise_ready = noise_init(&generator, &config, NOISE_RNG_SEED) == NOISE_OK;
   if (!noise_ready) Serial.println("Invalid noise configuration");
 }

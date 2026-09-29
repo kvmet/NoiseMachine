@@ -10,6 +10,9 @@
 #include "gui_controls.h"
 #include "noise_core.h"
 
+#define LABEL_WIDTH 170.0
+#define COMPACT_LABEL_WIDTH 170.0
+
 @interface NoiseAppDelegate : NSObject <NSApplicationDelegate, NSTextFieldDelegate>
 @end
 
@@ -18,6 +21,12 @@
   NSButton *_playButton;
   NSButton *_exportButton;
   NSTextField *_statusLabel;
+  NSTextField *_weatherLabel;
+  NSTextField *_silencedLabel;
+  NSTextField *_layerLabels[GUI_LAYER_COUNT];
+  NSTimer *_statusTimer;
+  noise_status _status; /* Latest from the render thread. */
+  BOOL _haveStatus;
   NSTextField *_seedField;
   NSSlider *_sliders[CONTROL_COUNT];
   NSTextField *_valueFields[CONTROL_COUNT];
@@ -72,7 +81,7 @@
   const char *note = gui_control_set(&_config, _surface, control, value);
   if (note) _statusLabel.stringValue = @(note);
   [self showChangesFrom:&previous edited:control];
-  if (control == CONTROL_SURFACE_WEIGHT) [self showSurfaceList];
+  if (control == CONTROL_SURFACE_COVERAGE) [self showSurfaceList];
   [self publishConfig];
 }
 
@@ -122,17 +131,48 @@
   return @[slider, field];
 }
 
-- (NSView *)row:(gui_control_id)control {
+- (NSView *)row:(gui_control_id)control labelWidth:(CGFloat)labelWidth
+    sliderWidth:(CGFloat)sliderWidth {
   NSMutableArray<NSView *> *views = [NSMutableArray arrayWithObject:
-      [self rowLabel:@(gui_controls[control].label) width:145.0]];
-  [views addObjectsFromArray:[self sliderAndField:control width:280.0]];
+      [self rowLabel:@(gui_controls[control].label) width:labelWidth]];
+  [views addObjectsFromArray:[self sliderAndField:control width:sliderWidth]];
   return [self rowWithViews:views];
+}
+
+- (NSView *)row:(gui_control_id)control {
+  return [self row:control labelWidth:LABEL_WIDTH sliderWidth:280.0];
+}
+
+/* Narrower rows for tabs with two columns. */
+- (NSView *)compactRow:(gui_control_id)control {
+  return [self row:control labelWidth:COMPACT_LABEL_WIDTH sliderWidth:150.0];
 }
 
 - (NSArray<NSView *> *)rowsFrom:(gui_control_id)first count:(unsigned)count {
   NSMutableArray<NSView *> *rows = [NSMutableArray arrayWithCapacity:count];
   for (unsigned i = 0; i < count; ++i) [rows addObject:[self row:first + i]];
   return rows;
+}
+
+- (NSArray<NSView *> *)compactRowsFrom:(gui_control_id)first count:(unsigned)count {
+  NSMutableArray<NSView *> *rows = [NSMutableArray arrayWithCapacity:count];
+  for (unsigned i = 0; i < count; ++i) [rows addObject:[self compactRow:first + i]];
+  return rows;
+}
+
+/* A gain row followed by what the weather is doing to its layer. */
+- (NSView *)mixerRow:(gui_control_id)control layer:(gui_layer)layer {
+  NSMutableArray<NSView *> *views = [NSMutableArray arrayWithObject:
+      [self rowLabel:@(gui_controls[control].label) width:LABEL_WIDTH]];
+  [views addObjectsFromArray:[self sliderAndField:control width:220.0]];
+  NSTextField *status = [NSTextField labelWithString:@""];
+  status.font = [NSFont systemFontOfSize:11.0];
+  status.textColor = NSColor.secondaryLabelColor;
+  status.lineBreakMode = NSLineBreakByTruncatingTail;
+  [status.widthAnchor constraintEqualToConstant:360.0].active = YES;
+  _layerLabels[layer] = status;
+  [views addObject:status];
+  return [self rowWithViews:views];
 }
 
 - (void)sliderChanged:(NSSlider *)sender {
@@ -156,16 +196,16 @@
   if (field.tag >= 0 && field.tag < CONTROL_COUNT) [self valueFieldChanged:field];
 }
 
-/* Pickers list each surface with its share of arrivals; duplicate names stay distinct. */
+/* Pickers list each surface with its share of the ground; duplicate names stay distinct. */
 - (void)showSurfaceList {
   const noise_rain_config *rain = &_config.rain;
   float total = 0.0f;
-  for (unsigned i = 0; i < rain->surface_count; ++i) total += rain->surface[i].weight;
+  for (unsigned i = 0; i < rain->surface_count; ++i) total += rain->surface[i].coverage;
   for (NSPopUpButton *picker in _surfacePickers) {
     [picker.menu removeAllItems];
     for (unsigned i = 0; i < rain->surface_count; ++i) {
       NSString *title = [NSString stringWithFormat:@"%s (%.3g%%)", rain->surface[i].name,
-                         100.0 * rain->surface[i].weight / total];
+                         100.0 * rain->surface[i].coverage / total];
       [picker.menu addItemWithTitle:title action:NULL keyEquivalent:@""];
     }
     [picker selectItemAtIndex:_surface];
@@ -225,18 +265,50 @@
   [self publishConfig];
 }
 
-- (void)varyChanged:(NSButton *)sender {
-  noise_config previous = _config;
-  gui_set_vary(&_config, sender.state == NSControlStateValueOn);
-  [self showChangesFrom:&previous edited:CONTROL_RAIN_INTENSITY];
+/* Only the controls of the active weather source respond. */
+- (void)showWeatherSource {
+  for (gui_control_id control = CONTROL_STORM_TIME_SCALE;
+       control <= CONTROL_SHAPE_HEADING_SPREAD; ++control) {
+    BOOL fixed = control >= CONTROL_FIXED_RAIN && control <= CONTROL_FIXED_CELL_BEARING;
+    BOOL enabled = fixed == (_config.storm.manual != 0);
+    _sliders[control].enabled = enabled;
+    _valueFields[control].enabled = enabled;
+  }
+}
+
+- (void)manualChanged:(NSButton *)sender {
+  _config.storm.manual = sender.state == NSControlStateValueOn;
+  [self showWeatherSource];
   [self publishConfig];
 }
+
+/* Redraws every readout from the latest status and the settings shown, so a gain
+   edit updates its line even while stopped. */
+- (void)showStatus:(NSTimer *)timer {
+  (void)timer;
+  if (_output && audio_output_status(_output, &_status)) _haveStatus = YES;
+  if (!_haveStatus) return;
+  char text[256];
+  for (gui_layer layer = 0; layer < GUI_LAYER_COUNT; ++layer) {
+    gui_layer_status(layer, &_status, &_config, text, sizeof(text));
+    _layerLabels[layer].stringValue = @(text);
+    _layerLabels[layer].toolTip = @(text);
+  }
+  gui_weather_summary(&_status, text, sizeof(text));
+  _weatherLabel.stringValue = @(text);
+  gui_silenced_summary(&_status, &_config, text, sizeof(text));
+  _silencedLabel.stringValue = @(text);
+}
+
+/* Strikes land uniformly by area between these distances. */
+#define STRIKE_NEAR_M 1000.0
+#define STRIKE_FAR_M 8000.0
 
 - (void)strikeThunder:(NSButton *)sender {
   (void)sender;
   if (!_output) return;
-  double near = _config.thunder.min_distance_m;
-  double far = _config.thunder.max_distance_m;
+  double near = STRIKE_NEAR_M;
+  double far = STRIKE_FAR_M;
   double u = arc4random() / 4294967296.0;
   double distance = sqrt(near * near + u * (far * far - near * near));
   double angle = 2.0 * M_PI * (arc4random() / 4294967296.0);
@@ -368,29 +440,46 @@
 }
 
 - (NSView *)surfacePickerRow {
-  return [self rowWithViews:@[[self rowLabel:@"Surface" width:145.0], [self surfacePicker]]];
+  return [self rowWithViews:@[[self rowLabel:@"Surface" width:LABEL_WIDTH],
+                              [self surfacePicker]]];
+}
+
+- (NSView *)columnWithRows:(NSArray<NSView *> *)rows {
+  NSStackView *column = [NSStackView stackViewWithViews:rows];
+  column.orientation = NSUserInterfaceLayoutOrientationVertical;
+  column.alignment = NSLayoutAttributeLeading;
+  column.spacing = 6.0;
+  return column;
+}
+
+- (NSView *)tabViewWithLeft:(NSArray<NSView *> *)left right:(NSArray<NSView *> *)right {
+  NSStackView *columns = [NSStackView stackViewWithViews:@[[self columnWithRows:left],
+                                                           [self columnWithRows:right]]];
+  columns.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+  columns.alignment = NSLayoutAttributeTop;
+  columns.spacing = 24.0;
+  return [self tabViewWithRows:@[columns]];
 }
 
 - (NSArray<NSView *> *)surfaceEditorRows {
   _addButton = [NSButton buttonWithTitle:@"Add" target:self action:@selector(addSurface:)];
   _deleteButton = [NSButton buttonWithTitle:@"Delete" target:self
                                      action:@selector(deleteSurface:)];
-  NSView *picker = [self rowWithViews:@[[self rowLabel:@"Surface" width:145.0],
+  NSView *picker = [self rowWithViews:@[[self rowLabel:@"Surface" width:LABEL_WIDTH],
                                         [self surfacePicker], _addButton, _deleteButton]];
   _nameField = [[NSTextField alloc] initWithFrame:NSZeroRect];
   _nameField.target = self;
   _nameField.action = @selector(renameSurface:);
   _nameField.cell.sendsActionOnEndEditing = YES;
   [_nameField.widthAnchor constraintEqualToConstant:200.0].active = YES;
-  NSView *name = [self rowWithViews:@[[self rowLabel:@"Name" width:145.0], _nameField]];
-  return @[picker, name, [self row:CONTROL_SURFACE_WEIGHT],
-           [self row:CONTROL_SURFACE_WEIGHT_MOD]];
+  NSView *name = [self rowWithViews:@[[self rowLabel:@"Name" width:LABEL_WIDTH], _nameField]];
+  return @[picker, name, [self row:CONTROL_SURFACE_COVERAGE]];
 }
 
 - (NSView *)cicadaSpeciesRow {
   NSTextField *label = [NSTextField labelWithString:@"Species"];
   label.alignment = NSTextAlignmentRight;
-  [label.widthAnchor constraintEqualToConstant:145.0].active = YES;
+  [label.widthAnchor constraintEqualToConstant:LABEL_WIDTH].active = YES;
   NSPopUpButton *menu = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
   [menu addItemsWithTitles:@[@"Dog-day", @"Minminzemi", @"Higurashi"]];
   [menu selectItemAtIndex:_config.cicadas.species];
@@ -402,60 +491,89 @@
   return row;
 }
 
-- (NSView *)seedRow {
+- (NSArray<NSView *> *)seedViews {
   NSTextField *label = [NSTextField labelWithString:@"Seed"];
-  label.alignment = NSTextAlignmentRight;
-  [label.widthAnchor constraintEqualToConstant:145.0].active = YES;
   _seedField = [[NSTextField alloc] initWithFrame:NSZeroRect];
   _seedField.stringValue = @"1";
-  [_seedField.widthAnchor constraintEqualToConstant:130.0].active = YES;
+  [_seedField.widthAnchor constraintEqualToConstant:100.0].active = YES;
   NSButton *reset = [NSButton buttonWithTitle:@"Reset generator"
                                        target:self action:@selector(resetGenerator:)];
-  NSStackView *row = [NSStackView stackViewWithViews:@[label, _seedField, reset]];
-  row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-  row.alignment = NSLayoutAttributeCenterY;
-  row.spacing = 10.0;
-  return row;
+  return @[label, _seedField, reset];
 }
 
 - (NSTabView *)tabs {
   NSView *mixer = [self tabViewWithRows:@[
+      [self row:CONTROL_MASTER_GAIN], [self row:CONTROL_REVERB_GAIN],
+      [self sectionLabel:@"Weather-driven layers"],
+      [self mixerRow:CONTROL_RAIN_GAIN layer:GUI_LAYER_RAIN],
+      [self mixerRow:CONTROL_BED_GAIN layer:GUI_LAYER_BED],
+      [self mixerRow:CONTROL_WIND_GAIN layer:GUI_LAYER_WIND],
+      [self mixerRow:CONTROL_CRICKET_GAIN layer:GUI_LAYER_CRICKETS],
+      [self mixerRow:CONTROL_CICADA_GAIN layer:GUI_LAYER_CICADAS],
+      [self mixerRow:CONTROL_THUNDER_GAIN layer:GUI_LAYER_THUNDER],
+      [self sectionLabel:@"Steady noise"],
       [self row:CONTROL_WHITE], [self row:CONTROL_PINK], [self row:CONTROL_HUM_50HZ],
-      [self row:CONTROL_HUM_60HZ], [self row:CONTROL_RAIN_GAIN], [self row:CONTROL_MASTER_GAIN]
+      [self row:CONTROL_HUM_60HZ]
   ]];
 
+  NSButton *manual = [NSButton checkboxWithTitle:@"Hold weather at fixed values"
+                                          target:self action:@selector(manualChanged:)];
+  manual.state = _config.storm.manual ? NSControlStateValueOn : NSControlStateValueOff;
+  NSMutableArray<NSView *> *stormRows = [NSMutableArray arrayWithObjects:
+      manual, [self sectionLabel:@"Simulated storms"], nil];
+  [stormRows addObjectsFromArray:[self rowsFrom:CONTROL_STORM_TIME_SCALE count:7]];
+  [stormRows addObject:[self sectionLabel:@"Fixed weather"]];
+  [stormRows addObjectsFromArray:[self rowsFrom:CONTROL_FIXED_RAIN count:7]];
+  NSView *storm = [self tabViewWithRows:stormRows];
+
+  NSMutableArray<NSView *> *shapeLeft = [NSMutableArray arrayWithObject:
+      [self sectionLabel:@"Rain"]];
+  [shapeLeft addObjectsFromArray:[self compactRowsFrom:CONTROL_SHAPE_PEAK_RAIN_MIN count:7]];
+  [shapeLeft addObject:[self sectionLabel:@"Gust front"]];
+  [shapeLeft addObjectsFromArray:[self compactRowsFrom:CONTROL_SHAPE_FRONT_MIN count:7]];
+  NSMutableArray<NSView *> *shapeRight = [NSMutableArray arrayWithObject:
+      [self sectionLabel:@"Cooling"]];
+  [shapeRight addObjectsFromArray:[self compactRowsFrom:CONTROL_SHAPE_COOLING_MIN count:6]];
+  [shapeRight addObject:[self sectionLabel:@"Lightning"]];
+  [shapeRight addObjectsFromArray:[self compactRowsFrom:CONTROL_SHAPE_LIGHTNING_MIN count:2]];
+  [shapeRight addObject:[self sectionLabel:@"Track"]];
+  [shapeRight addObjectsFromArray:[self compactRowsFrom:CONTROL_SHAPE_BUILD count:5]];
+  NSView *shape = [self tabViewWithLeft:shapeLeft right:shapeRight];
+  [self showWeatherSource];
+
   NSMutableArray<NSView *> *windRows = [NSMutableArray arrayWithObject:
-      [self sectionLabel:@"Synthesized wind"]];
-  [windRows addObjectsFromArray:[self rowsFrom:CONTROL_WIND_GAIN count:5]];
+      [self sectionLabel:@"Sound"]];
+  [windRows addObjectsFromArray:@[[self row:CONTROL_WIND_WIDTH],
+                                  [self row:CONTROL_WIND_BRIGHTNESS],
+                                  [self row:CONTROL_WIND_RUMBLE],
+                                  [self row:CONTROL_WIND_BALANCE]]];
+  [windRows addObject:[self sectionLabel:@"Gusts"]];
+  [windRows addObjectsFromArray:[self rowsFrom:CONTROL_GUST_INTENSITY count:2]];
   NSView *wind = [self tabViewWithRows:windRows];
 
-  NSMutableArray<NSView *> *insectRows = [NSMutableArray arrayWithObject:
+  NSMutableArray<NSView *> *cricketRows = [NSMutableArray arrayWithObject:
       [self sectionLabel:@"Crickets"]];
-  [insectRows addObjectsFromArray:[self rowsFrom:CONTROL_CRICKET_GAIN count:7]];
-  [insectRows addObject:[self sectionLabel:@"Cicadas"]];
-  [insectRows addObject:[self cicadaSpeciesRow]];
-  [insectRows addObjectsFromArray:[self rowsFrom:CONTROL_CICADA_GAIN count:7]];
-  NSView *insects = [self tabViewWithRows:insectRows];
+  [cricketRows addObjectsFromArray:[self compactRowsFrom:CONTROL_CRICKET_CALL_RATE count:6]];
+  [cricketRows addObjectsFromArray:[self compactRowsFrom:CONTROL_CRICKET_MIN_TEMPERATURE
+                                                   count:3]];
+  NSMutableArray<NSView *> *cicadaRows = [NSMutableArray arrayWithObjects:
+      [self sectionLabel:@"Cicadas"], [self cicadaSpeciesRow], nil];
+  [cicadaRows addObjectsFromArray:[self compactRowsFrom:CONTROL_CICADA_PITCH count:6]];
+  [cicadaRows addObjectsFromArray:[self compactRowsFrom:CONTROL_CICADA_MIN_TEMPERATURE
+                                                  count:2]];
+  NSView *insects = [self tabViewWithLeft:cricketRows right:cicadaRows];
 
-  NSMutableArray<NSView *> *thunderRows = [NSMutableArray arrayWithObject:
-      [self sectionLabel:@"Thunder"]];
-  [thunderRows addObjectsFromArray:[self rowsFrom:CONTROL_THUNDER_GAIN count:6]];
+  NSMutableArray<NSView *> *thunderRows = [NSMutableArray arrayWithArray:
+      [self rowsFrom:CONTROL_THUNDER_REVERB_GAIN count:3]];
   [thunderRows addObject:[NSButton buttonWithTitle:@"Strike"
                                             target:self action:@selector(strikeThunder:)]];
   NSView *thunder = [self tabViewWithRows:thunderRows];
 
-  NSButton *vary = [NSButton checkboxWithTitle:@"Vary rain automatically"
-                                        target:self action:@selector(varyChanged:)];
-  vary.state = _config.weather.vary ? NSControlStateValueOn : NSControlStateValueOff;
-  NSMutableArray<NSView *> *rainRows = [NSMutableArray arrayWithObjects:
-      vary, [self sectionLabel:@"Weather"], nil];
-  [rainRows addObjectsFromArray:[self rowsFrom:CONTROL_RAIN_INTENSITY count:5]];
-  [rainRows addObject:[self row:CONTROL_DROP_RATE]];
-  [rainRows addObject:[self row:CONTROL_FALL_HEIGHT]];
+  NSMutableArray<NSView *> *rainRows = [NSMutableArray arrayWithArray:
+      [self rowsFrom:CONTROL_DROP_RATE count:3]];
   [rainRows addObject:[self sectionLabel:@"Surfaces"]];
   _surfacePickers = [NSMutableArray array];
   [rainRows addObjectsFromArray:[self surfaceEditorRows]];
-  [rainRows addObject:[self seedRow]];
   NSView *rain = [self tabViewWithRows:rainRows];
 
   NSMutableArray<NSView *> *impactRows = [NSMutableArray arrayWithObjects:
@@ -470,33 +588,22 @@
   [bubbleRows addObjectsFromArray:[self rowsFrom:CONTROL_BUBBLE_PROBABILITY count:8]];
   NSView *bubbles = [self tabViewWithRows:bubbleRows];
 
-  NSMutableArray<NSView *> *modRows = [NSMutableArray arrayWithObjects:
-      [self sectionLabel:@"Weather intensity attenuverters"],
-      [NSTextField labelWithString:@"+ follows intensity     0 disconnects     - inverts"], nil];
-  [modRows addObjectsFromArray:[self rowsFrom:CONTROL_WEATHER_MOD
-                                        count:NOISE_WEATHER_MOD_COUNT]];
-  [modRows addObject:[NSTextField labelWithString:
-      @"Each surface's weight weather mod is on the Rain tab."]];
-  NSView *weatherMod = [self tabViewWithRows:modRows];
-
   NSView *spatial = [self tabViewWithRows:@[
-      [self row:CONTROL_RAIN_MIN_DISTANCE], [self row:CONTROL_RAIN_MAX_DISTANCE],
-      [self row:CONTROL_STEREO_WIDTH], [self row:CONTROL_HEAD], [self row:CONTROL_REAR],
-      [self row:CONTROL_REVERB_GAIN]
+      [self row:CONTROL_STEREO_WIDTH], [self row:CONTROL_HEAD], [self row:CONTROL_REAR]
   ]];
 
   NSTabView *tabs = [[NSTabView alloc] initWithFrame:NSZeroRect];
-  for (NSArray *item in @[@[@"Mixer", mixer], @[@"Wind", wind], @[@"Insects", insects],
-                           @[@"Thunder", thunder], @[@"Rain", rain], @[@"Impact", impact],
-                           @[@"Bubbles", bubbles],
-                           @[@"Weather Mod", weatherMod], @[@"Spatial", spatial]]) {
+  for (NSArray *item in @[@[@"Mixer", mixer], @[@"Storm", storm], @[@"Storm Shape", shape],
+                           @[@"Wind", wind], @[@"Insects", insects], @[@"Thunder", thunder],
+                           @[@"Rain", rain], @[@"Impact", impact], @[@"Bubbles", bubbles],
+                           @[@"Spatial", spatial]]) {
     NSTabViewItem *tab = [[NSTabViewItem alloc] initWithIdentifier:item[0]];
     tab.label = item[0];
     tab.view = item[1];
     [tabs addTabViewItem:tab];
   }
-  [tabs.widthAnchor constraintEqualToConstant:610.0].active = YES;
-  [tabs.heightAnchor constraintEqualToConstant:620.0].active = YES;
+  [tabs.widthAnchor constraintEqualToConstant:880.0].active = YES;
+  [tabs.heightAnchor constraintEqualToConstant:600.0].active = YES;
   return tabs;
 }
 
@@ -505,7 +612,7 @@
   gui_startup_config(&_config);
 
   _window = [[NSWindow alloc]
-      initWithContentRect:NSMakeRect(0.0, 0.0, 650.0, 770.0)
+      initWithContentRect:NSMakeRect(0.0, 0.0, 920.0, 820.0)
                 styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                           NSWindowStyleMaskMiniaturizable
                   backing:NSBackingStoreBuffered
@@ -528,13 +635,25 @@
   _statusLabel.textColor = NSColor.secondaryLabelColor;
   _exportButton = [NSButton buttonWithTitle:@"Export…" target:self
                                      action:@selector(exportAudio:)];
-  NSStackView *playback = [NSStackView stackViewWithViews:@[_playButton, _exportButton,
-                                                            _statusLabel]];
+  NSMutableArray<NSView *> *playbackViews = [NSMutableArray arrayWithObjects:
+      _playButton, _exportButton, nil];
+  [playbackViews addObjectsFromArray:[self seedViews]];
+  [playbackViews addObject:_statusLabel];
+  NSStackView *playback = [NSStackView stackViewWithViews:playbackViews];
   playback.orientation = NSUserInterfaceLayoutOrientationHorizontal;
   playback.alignment = NSLayoutAttributeCenterY;
   playback.spacing = 12.0;
 
-  NSStackView *root = [NSStackView stackViewWithViews:@[title, subtitle, tabs, playback]];
+  _weatherLabel = [NSTextField labelWithString:@"Weather appears during playback"];
+  _weatherLabel.font = [NSFont monospacedDigitSystemFontOfSize:12.0 weight:NSFontWeightRegular];
+  _silencedLabel = [NSTextField labelWithString:@""];
+  _silencedLabel.textColor = NSColor.systemOrangeColor;
+  _statusTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 target:self
+                                                selector:@selector(showStatus:)
+                                                userInfo:nil repeats:YES];
+
+  NSStackView *root = [NSStackView stackViewWithViews:@[title, subtitle, tabs, _weatherLabel,
+                                                        _silencedLabel, playback]];
   root.orientation = NSUserInterfaceLayoutOrientationVertical;
   root.alignment = NSLayoutAttributeLeading;
   root.spacing = 8.0;
@@ -563,6 +682,7 @@
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
   (void)notification;
+  [_statusTimer invalidate];
   audio_output_destroy(_output);
   _output = NULL;
 }

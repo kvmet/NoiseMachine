@@ -43,14 +43,15 @@ static void print_usage(const char *program) {
   fprintf(stderr,
       "usage: %s [options] OUTPUT.wav\n"
       "  -k white|pink|hum50|hum60|wind|crickets|cicadas|rain|thunder   repeat to mix\n"
-      "  -r intensity   fixed rain intensity, 0..1\n"
-      "  -v             vary rain with the Markov controller\n"
-      "  -l minimum     minimum varying intensity, 0..1\n"
-      "  -u maximum     maximum varying intensity, 0..1\n"
+      "  -r mm/h        fixed rain rate, 0..200; default 10 with -k rain\n"
+      "  -w m/s         fixed wind speed, 0..40; default 10 with -k wind\n"
+      "  -t rate        fixed lightning flashes/minute, 0..30; default 2 with -k thunder\n"
+      "  -T celsius     fixed temperature, -10..45; default 25\n"
+      "  -v             simulate passing storms instead of fixed weather\n"
+      "  -x scale       storm time speed-up, 1..600; default 1\n"
       "  -m mixed|water|dirt|leaf|concrete|glass|metal|plastic|asphalt|asphalt-roof\n"
       "  -c dog-day|minminzemi|higurashi   cicada species; default dog-day\n"
-      "  -n rate        arrivals/second at full intensity, 0..2000\n"
-      "  -t rate        thunder strikes/minute, 0..20; default 2\n"
+      "  -n rate        drops played one by one per second, 0..2000\n"
       "  -b metres      ear spacing / head diameter, 0..0.5; default 0.18\n"
       "  -a amount      head model strength, 0..1; 0 bypasses it\n"
       "  -f amount      rear filter strength, 0..1; 0 bypasses it\n"
@@ -85,8 +86,27 @@ int main(int argc, char **argv) {
   double seconds = 10.0;
   const char *out_path = NULL;
   int explicit_layer = 0;
-  int explicit_intensity = 0;
   int rain = 0;
+  int explicit_rain = 0, explicit_wind = 0, explicit_lightning = 0;
+  /* Numeric options that store one config field. */
+  const struct {
+    const char *flag;
+    double minimum, maximum;
+    float *field;
+    int *explicit_flag;
+  } numbers[] = {
+    {"-r", 0.0, 200.0, &config.storm.fixed.rain_mm_h, &explicit_rain},
+    {"-w", 0.0, 40.0, &config.storm.fixed.wind_m_s, &explicit_wind},
+    {"-t", 0.0, 30.0, &config.storm.fixed.lightning_per_min, &explicit_lightning},
+    {"-T", -10.0, 45.0, &config.storm.fixed.temperature_c, NULL},
+    {"-x", 1.0, 600.0, &config.storm.time_scale, NULL},
+    {"-n", 0.0, 2000.0, &config.rain.max_drops_per_s, NULL},
+    {"-b", 0.0, 0.5, &config.listener.stereo_width_m, NULL},
+    {"-a", 0.0, 1.0, &config.listener.head_amount, NULL},
+    {"-f", 0.0, 1.0, &config.listener.rear_amount, NULL},
+    {"-e", 0.0, 1.0, &config.reverb_gain, NULL},
+    {"-g", 0.0, 1.0, &config.master_gain, NULL},
+  };
 
   for (int i = 1; i < argc; ++i) {
     const char *arg = argv[i];
@@ -95,7 +115,7 @@ int main(int argc, char **argv) {
       return 0;
     }
     if (strcmp(arg, "-v") == 0) {
-      config.weather.vary = 1;
+      config.storm.manual = 0;
       rain = 1;
       continue;
     }
@@ -139,7 +159,7 @@ int main(int argc, char **argv) {
         noise_config defaults;
         noise_config_default(&defaults);
         for (unsigned i = 0; i < config.rain.surface_count; ++i) {
-          config.rain.surface[i].weight = defaults.rain.surface[i].weight;
+          config.rain.surface[i].coverage = defaults.rain.surface[i].coverage;
         }
       } else {
         unsigned match = 0;
@@ -152,7 +172,7 @@ int main(int argc, char **argv) {
           return 1;
         }
         for (unsigned i = 0; i < config.rain.surface_count; ++i) {
-          config.rain.surface[i].weight = i == match ? 1.0f : 0.0f;
+          config.rain.surface[i].coverage = i == match ? 1.0f : 0.0f;
         }
       }
     } else if (strcmp(arg, "-c") == 0) {
@@ -183,38 +203,22 @@ int main(int argc, char **argv) {
         seconds = number;
         continue;
       }
-      double maximum = strcmp(arg, "-n") == 0 ? 2000.0 :
-          (strcmp(arg, "-b") == 0 ? 0.5 : (strcmp(arg, "-t") == 0 ? 20.0 : 1.0));
-      if (number < 0.0 || number > maximum) {
-        fprintf(stderr, "value for %s outside 0..%g\n", arg, maximum);
-        return 1;
+      size_t option = 0;
+      while (option < sizeof(numbers) / sizeof(numbers[0]) && strcmp(arg, numbers[option].flag)) {
+        ++option;
       }
-      if (strcmp(arg, "-r") == 0) {
-        config.weather.intensity = (float)number;
-        explicit_intensity = 1;
-        rain = 1;
-      } else if (strcmp(arg, "-l") == 0) {
-        config.weather.min_intensity = (float)number;
-      } else if (strcmp(arg, "-u") == 0) {
-        config.weather.max_intensity = (float)number;
-      } else if (strcmp(arg, "-n") == 0) {
-        config.rain.max_drops_per_s = (float)number;
-      } else if (strcmp(arg, "-t") == 0) {
-        config.thunder.rate_per_min = (float)number;
-      } else if (strcmp(arg, "-e") == 0) {
-        config.reverb_gain = (float)number;
-      } else if (strcmp(arg, "-b") == 0) {
-        config.listener.stereo_width_m = (float)number;
-      } else if (strcmp(arg, "-a") == 0) {
-        config.listener.head_amount = (float)number;
-      } else if (strcmp(arg, "-f") == 0) {
-        config.listener.rear_amount = (float)number;
-      } else if (strcmp(arg, "-g") == 0) {
-        config.master_gain = (float)number;
-      } else {
+      if (option == sizeof(numbers) / sizeof(numbers[0])) {
         fprintf(stderr, "unknown option: %s\n", arg);
         return 1;
       }
+      if (number < numbers[option].minimum || number > numbers[option].maximum) {
+        fprintf(stderr, "value for %s outside %g..%g\n", arg, numbers[option].minimum,
+                numbers[option].maximum);
+        return 1;
+      }
+      *numbers[option].field = (float)number;
+      if (numbers[option].explicit_flag) *numbers[option].explicit_flag = 1;
+      if (strcmp(arg, "-r") == 0) rain = 1;
     }
   }
   if (!out_path) {
@@ -222,9 +226,10 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (!explicit_layer && !rain) config.ambient_gain[NOISE_KIND_PINK] = 0.3f;
-  if (rain && !explicit_intensity) {
-    config.weather.intensity = config.weather.vary ?
-        0.5f * (config.weather.min_intensity + config.weather.max_intensity) : 0.5f;
+  if (rain && !explicit_rain) config.storm.fixed.rain_mm_h = 10.0f;
+  if (config.wind.gain > 0.0f && !explicit_wind) config.storm.fixed.wind_m_s = 10.0f;
+  if (config.thunder.gain > 0.0f && !explicit_lightning) {
+    config.storm.fixed.lightning_per_min = 2.0f;
   }
   double max_frames = (UINT32_MAX - 36u) / WAV_FRAME_BYTES;
   double requested_frames = seconds * NOISE_SAMPLE_RATE_HZ;
@@ -235,7 +240,7 @@ int main(int argc, char **argv) {
   uint32_t frames = (uint32_t)requested_frames;
   static noise_gen gen;
   if (noise_init(&gen, &config, seed) != NOISE_OK) {
-    fprintf(stderr, "invalid configuration; check intensity bounds and initial intensity\n");
+    fprintf(stderr, "invalid configuration\n");
     return 1;
   }
   FILE *file = fopen(out_path, "wb");

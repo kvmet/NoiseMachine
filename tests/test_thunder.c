@@ -14,7 +14,6 @@ static int compare_double(const void *left, const void *right) {
 static void test_thunder_ending(void) {
   noise_config c = silent_config();
   c.thunder.gain = 1.0f;
-  c.thunder.rate_per_min = 0.0f;
   double stop[12];
   unsigned loud = 0;
   for (unsigned s = 0; s < 12; ++s) {
@@ -70,7 +69,6 @@ static double brightness(const int16_t *x, unsigned frames) {
 static void test_thunder_tail(void) {
   noise_config c = silent_config();
   c.thunder.gain = 1.0f;
-  c.thunder.rate_per_min = 0.0f;
   static int16_t strike_audio[2 * 9 * NOISE_SAMPLE_RATE_HZ];
   double ratio[8];
   for (unsigned s = 0; s < 8; ++s) {
@@ -94,7 +92,6 @@ static void test_thunder_tail(void) {
 static void test_thunder_echoes(void) {
   noise_config c = silent_config();
   c.thunder.gain = 1.0f;
-  c.thunder.rate_per_min = 0.0f;
   static int16_t strike_audio[2 * 40 * NOISE_SAMPLE_RATE_HZ];
   for (unsigned s = 0; s < 8; ++s) {
     assert(noise_init(&a, &c, 120 + s) == NOISE_OK);
@@ -123,15 +120,6 @@ static void test_thunder(void) {
   c.thunder.gain = 1.01f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
-  c.thunder.rate_per_min = 21.0f;
-  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
-  c = silent_config();
-  c.thunder.min_distance_m = 199.0f;
-  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
-  c = silent_config();
-  c.thunder.max_distance_m = 900.0f;
-  assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
-  c = silent_config();
   c.thunder.reverb_decay_s = 0.4f;
   assert(noise_init(&a, &c, 1) == NOISE_INVALID_CONFIG);
   c = silent_config();
@@ -140,7 +128,6 @@ static void test_thunder(void) {
 
   c = silent_config();
   c.thunder.gain = 1.0f;
-  c.thunder.rate_per_min = 0.0f;
   assert(noise_init(&a, &c, 61) == NOISE_OK);
   b = a;
   thunder_strike strike = {{100.0f, 0.0f}};
@@ -244,7 +231,7 @@ static void test_thunder(void) {
   c.thunder.reverb_gain = 0.0f;
 
   /* Automatic strikes: one at start, then about rate/min, including capacity losses. */
-  c.thunder.rate_per_min = 20.0f;
+  c.storm.fixed.lightning_per_min = 20.0f;
   assert(noise_init(&a, &c, 64) == NOISE_OK);
   for (unsigned second = 0; second < 120; ++second) noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   uint64_t strikes = a.state.generated_thunder + a.state.dropped_thunder;
@@ -253,11 +240,11 @@ static void test_thunder(void) {
 
   /* Thunder draws from its own stream, so rain is unchanged by it. */
   c = silent_config();
-  c.weather.intensity = 0.8f;
+  c.storm.fixed.rain_mm_h = 10.0f;
+  c.storm.fixed.lightning_per_min = 20.0f;
   c.reverb_gain = 0.2f;
   assert(noise_init(&a, &c, 65) == NOISE_OK);
   c.thunder.gain = 1.0f;
-  c.thunder.rate_per_min = 20.0f;
   assert(noise_init(&b, &c, 65) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   noise_fill(&b, audio, NOISE_SAMPLE_RATE_HZ);
