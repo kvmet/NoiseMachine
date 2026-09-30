@@ -122,8 +122,7 @@ static float cricket_next(noise_crickets *crickets, noise_cricket_voice *voice,
     }
   }
   /* Runs between chirps too, so filter tails decay instead of holding. */
-  noise_spatial_next(&voice->spatial, listener, bus, sample);
-  return sample;
+  return noise_spatial_next(&voice->spatial, listener, bus, sample);
 }
 
 float noise_crickets_next(noise_crickets *crickets, const noise_cricket_config *c,

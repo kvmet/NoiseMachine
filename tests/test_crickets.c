@@ -161,7 +161,7 @@ static void test_cricket_space(void) {
   c.crickets.placement.min_distance_m = 16.0f;
   c.reverb_gain = 0.5f;
   double wet = cricket_energy(c, 10);
-  assert(wet > 2.0 * far);
+  assert(wet > 1.2 * far);
 
   c.reverb_gain = 0.0f;
   c.crickets.placement.stereo_width = 1.0f;

@@ -19,6 +19,7 @@ void noise_spatial_init(noise_spatial *voice, const noise_listener_config *liste
   float k = NOISE_SAMPLE_RATE_HZ * radius / 343.0f;
   int head_enabled = radius > 0.0f && listener->head_amount > 0.0f;
   voice->head_feedback = head_enabled ? (k - 1.0f) / (k + 1.0f) : 0.0f;
+  voice->reverb_gain = 1.0f / sqrtf(fmaxf(1.0f, distance));
   for (unsigned ear = 0; ear < 2; ++ear) {
     float cosine = ear == 0 ? -lateral : lateral;
     float gap = distance - radius;
@@ -57,7 +58,7 @@ void noise_spatial_init(noise_spatial *voice, const noise_listener_config *liste
   voice->lowpass_alpha = -expm1f(-2.0f * NOISE_PI * cutoff / NOISE_SAMPLE_RATE_HZ);
 }
 
-void noise_spatial_next(noise_spatial *voice, const noise_listener_config *listener,
+float noise_spatial_next(noise_spatial *voice, const noise_listener_config *listener,
                          noise_bus *bus, float source) {
   voice->lowpass_state += voice->lowpass_alpha * (source - voice->lowpass_state);
   float direct = source + listener->rear_amount * (voice->lowpass_state - source);
@@ -73,6 +74,7 @@ void noise_spatial_next(noise_spatial *voice, const noise_listener_config *liste
     }
   }
   voice->head_previous_input = direct;
+  return voice->reverb_gain * source;
 }
 
 void noise_bus_next(noise_bus *bus, float *left, float *right) {

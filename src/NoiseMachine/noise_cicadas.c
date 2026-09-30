@@ -229,8 +229,7 @@ static float cicada_next(noise_cicadas *cicadas, noise_cicada_voice *voice,
     }
   }
   /* Runs between calls too, so filter tails decay instead of holding. */
-  noise_spatial_next(&voice->spatial, listener, bus, sample);
-  return sample;
+  return noise_spatial_next(&voice->spatial, listener, bus, sample);
 }
 
 /* A crowd at spread pitches blurs into a band wider than one body. */

@@ -21,6 +21,7 @@ typedef struct noise_listener_config {
 /* Distance, ear delay, head shadow, and rear filter for one point source. */
 typedef struct noise_spatial {
   float ear_gain[2];
+  float reverb_gain;
   unsigned ear_delay[2];
   float delay_weight[2][4];
   float head_b0[2];
@@ -45,7 +46,9 @@ extern "C" {
 int noise_listener_config_valid(const noise_listener_config *c);
 void noise_spatial_init(noise_spatial *voice, const noise_listener_config *listener,
                          position_polar position);
-void noise_spatial_next(noise_spatial *voice, const noise_listener_config *listener,
+/* Returns the source's reverb send; outdoors it fades with distance, half as fast as
+   the direct path in dB. */
+float noise_spatial_next(noise_spatial *voice, const noise_listener_config *listener,
                          noise_bus *bus, float source);
 /* Reads and clears the current frame, then advances. */
 void noise_bus_next(noise_bus *bus, float *left, float *right);

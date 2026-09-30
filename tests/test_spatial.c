@@ -119,9 +119,10 @@ static void test_spatial_bypass_and_distance(void) {
     noise_fill(&b, frame, 1);
     if (n < 500) assert(abs(audio[2 * n] - 2 * frame[0]) <= 1);
     if (n > 2000) {
-      assert(audio[2 * n] == frame[0]);
-      assert(audio[2 * n + 1] == frame[1]);
-      wet_samples += frame[0] != 0;
+      /* Half the distance gives sqrt(2) times the reverb tail. */
+      assert(fabs(audio[2 * n] - 1.41421356 * frame[0]) <= 2.0);
+      assert(fabs(audio[2 * n + 1] - 1.41421356 * frame[1]) <= 2.0);
+      wet_samples += audio[2 * n] != 0;
     }
   }
   assert(wet_samples > 100);
@@ -187,7 +188,22 @@ static void test_spatial_extremes(void) {
   }
 }
 
+/* Outdoors the reverb send fades as 1/sqrt(r): 4x the distance halves it. */
+static void test_spatial_reverb_send(void) {
+  noise_listener_config listener = silent_config().listener;
+  const float distance[] = {0.5f, 1.0f, 4.0f, 16.0f};
+  const float expected[] = {1.0f, 1.0f, 0.5f, 0.25f};
+  for (unsigned i = 0; i < 4; ++i) {
+    noise_spatial voice = {0};
+    noise_bus bus = {0};
+    position_polar position = {distance[i], 0.0f};
+    noise_spatial_init(&voice, &listener, position);
+    assert(fabsf(noise_spatial_next(&voice, &listener, &bus, 1.0f) - expected[i]) < 1e-6f);
+  }
+}
+
 void run_spatial_tests(void) {
+  test_spatial_reverb_send();
   test_spatial_geometry();
   test_spatial_bypass_and_distance();
   test_spatial_extremes();

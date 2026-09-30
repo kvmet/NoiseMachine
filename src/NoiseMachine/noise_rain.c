@@ -464,8 +464,7 @@ float noise_rain_next(noise_rain *rain, noise_state *state, const noise_rain_con
         source = voice->material_lowpass_state[stage];
       }
     }
-    send += c->gain * source;
-    noise_spatial_next(&voice->spatial, listener, &rain->bus, source);
+    send += c->gain * noise_spatial_next(&voice->spatial, listener, &rain->bus, source);
     if (!remaining) voice->filter_tail -= 1;
     if (!remaining && voice->filter_tail == 0) {
       /* Keep the active prefix dense to avoid scanning idle voices per sample. */

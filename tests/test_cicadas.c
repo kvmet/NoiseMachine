@@ -160,9 +160,9 @@ static void test_cicada_space(void) {
     }
     assert(a.state.clipped_samples == 0);
   }
-  /* 8x the distance is 64x less energy; the reverb send is before that loss. */
+  /* 8x the distance is 64x less energy. */
   assert(energy[0] / energy[1] > 50.0 && energy[0] / energy[1] < 80.0);
-  assert(energy[2] > 2.0 * energy[1]);
+  assert(energy[2] > 1.1 * energy[1]);
 }
 
 /* Share of the 1 s left channel within 8% of the frequency. */

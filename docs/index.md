@@ -11,7 +11,8 @@ Each played rain drop creates up to four damped modes from its surface: a
 click, two resonances, and a bubble. Their sum feeds the direct stereo path
 and a shared reverb. A noise bed stands in for drops too many to play one by
 one; it joins the direct path only. Crickets and cicadas use the same direct path and
-reverb. Thunder has its own reverb and limiter, then joins the direct mix.
+reverb. The direct path falls as 1/r past 1 m; the reverb send falls as 1/sqrt(r),
+since open air has no room to hold a diffuse field. Thunder has its own reverb and limiter, then joins the direct mix.
 Ambient layers join the stereo mix after the reverb.
 `rain.gain` scales direct rain, the bed, and the reverb send. `master_gain` scales
 the final output before conversion to PCM.
