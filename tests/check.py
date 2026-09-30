@@ -59,7 +59,7 @@ def main():
             played, lost = map(int, re.search(r"drops: (\d+); capacity losses: (\d+)",
                                               result.stdout).groups())
             assert lost < 0.01 * (played + lost), result.stdout
-            assert "clipped samples: 0" in result.stdout, result.stdout
+            assert "limited frames: 0" in result.stdout, result.stdout
         run(str(host), "-k", "rain", "-k", "thunder", "-v", "-x", "600", "-d", "20",
             str(destination), stdout=subprocess.DEVNULL)
         for args in (("-d", "nan"), ("-d", "inf"), ("-d", "1e300"), ("-d", "-1"),

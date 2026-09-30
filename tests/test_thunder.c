@@ -149,7 +149,6 @@ static void test_thunder(void) {
   assert(a.thunder.voice[0].length == 0 && a.thunder.voice[1].length == 0);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   for (unsigned i = 0; i < 2 * NOISE_SAMPLE_RATE_HZ; ++i) assert(audio[i] == 0);
-  assert(a.state.clipped_samples == 0);
 
   /* Distance does not change the random draws, so only its filters and gains differ. */
   double clap_ratio[2];

@@ -3,6 +3,7 @@
 #include "test_support.h"
 
 int main(void) {
+  run_limiter_tests();
   run_engine_tests();
   run_ambient_tests();
   run_wind_tests();

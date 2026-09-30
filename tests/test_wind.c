@@ -30,7 +30,7 @@ static void test_wind(void) {
   assert(noise_init(&a, &c, 17) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
   assert(band_power(6400) / band_power(200) > 20.0 * calm_ratio);
-  assert(a.state.clipped_samples == 0);
+  assert(a.state.limited_frames == 0);
 
   /* Level is proportional to speed, relative to 10 m/s. */
   c.storm.fixed.wind_m_s = 10.0f;

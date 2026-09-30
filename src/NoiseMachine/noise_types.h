@@ -44,7 +44,7 @@ typedef struct noise_state {
   unsigned peak_active_drops;
   uint64_t generated_drops;
   uint64_t dropped_drops;
-  uint64_t clipped_samples;
+  uint64_t limited_frames; /* Frames the output limiter turned down. */
   uint64_t generated_thunder;
   uint64_t dropped_thunder;
 } noise_state;

@@ -37,5 +37,6 @@ void run_spatial_tests(void);
 void run_storm_tests(void);
 void run_reverb_tests(void);
 void run_mix_tests(void);
+void run_limiter_tests(void);
 
 #endif

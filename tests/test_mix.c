@@ -36,7 +36,7 @@ static double measure(const noise_config *c, double seconds, float strike_m) {
       assert(noise_trigger_thunder(&a, &strike) == NOISE_OK);
     }
     loudness result = measure_loudness(&a, seconds);
-    assert(a.state.clipped_samples == 0);
+    assert(a.state.limited_frames == 0);
     power += pow(10.0, (strike_m > 0.0f ? result.max_momentary : result.integrated) / 10.0);
   }
   return 10.0 * log10(power / SEEDS);

@@ -15,7 +15,8 @@ reverb. The direct path falls as 1/r past 1 m; the reverb send falls as 1/sqrt(r
 since open air has no room to hold a diffuse field. Thunder has its own reverb and limiter, then joins the direct mix.
 Ambient layers join the stereo mix after the reverb.
 `rain.gain` scales direct rain, the bed, and the reverb send. `master_gain` scales
-the final output before conversion to PCM.
+the final output, then the output limiter keeps peaks at -1 dBFS before
+conversion to PCM.
 
 Every layer's gain 1 at its reference condition gives the same loudness,
 -24 LUFS (BS.1770, power mean over eight seeds, default reverb, master gain 1),
@@ -812,11 +813,14 @@ configuration, and seed, independent of fill size. Floating-point and
 libm differences can prevent bit-identical output across CPU/toolchain
 combinations. The generator is for sound, not cryptography.
 
-The output converter saturates only when the final mix exceeds the PCM
-range and increments `state.clipped_samples` for each affected channel
-sample. There is no automatic gain control. Reduce gains if the counter
-is nonzero. The host reports clipping, generated drops, capacity losses,
-and peak voice count.
+A lookahead peak limiter after `master_gain` keeps every output sample at
+or under -1 dBFS, so the PCM conversion never clips. It looks 2 ms
+(`NOISE_LIMITER_FRAMES`) ahead and delays the output by the same amount.
+Both channels share one gain, which reaches each peak's need before the peak
+plays and recovers with a 100 ms time constant. Below the ceiling it passes
+the signal unchanged. `state.limited_frames` counts frames it turned down;
+reduce gains if it climbs steadily. The host reports limited frames,
+generated drops, capacity losses, and peak voice count.
 
 ## ESP32 and validation
 
@@ -845,14 +849,17 @@ played rain, driving rain rate, sizes, and impact speed, sheets that follow
 the wind bearing, the bed per ear, a storm passage, time scale, gusts, insect and thunder
 couplings, voice exhaustion and recycling, silence, block-size
 independence, malformed CLI values, WAV headers, all nine surfaces at
-150 mm/h without clipping and with under 1% of drops lost to the voice pool, and
+150 mm/h without limiting and with under 1% of drops lost to the voice pool, and
 linking the sketch against the C engine. Spatial checks cover rendered
 phase, ear symmetry, head shelf gain, width bypass, distance gain,
-reverb-send independence, rear filtering, and maximum delay bounds.
+reverb-send falloff, rear filtering, and maximum delay bounds.
 Thunder checks cover validation, voice limits, retirement to exact silence,
 low-frequency dominance, distance filtering, panning, reverb decay, tapered
 endings over 12 strikes, a tail darker than its onset, echoes after the
 direct arrivals, automatic rate, and rain-stream independence.
+Level checks hold every layer's reference loudness within 1 dB. Limiter checks
+cover exact pass-through under the ceiling, the ceiling against spikes, steps,
+and loud noise, and recovery to unity gain.
 A host stub checks linkage only;
 it does not emulate ESP32 peripherals or prove the Arduino SDK build.
 

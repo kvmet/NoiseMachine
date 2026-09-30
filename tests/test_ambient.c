@@ -8,6 +8,7 @@ static void test_hum(void) {
     noise_config c = silent_config();
     c.ambient_gain[kind] = 1.0f;
     assert(noise_init(&a, &c, 1) == NOISE_OK);
+    noise_fill(&a, audio, NOISE_LIMITER_FRAMES);
     noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
     double frequency = kind == NOISE_KIND_HUM_50HZ ? 50.0 : 60.0;
     double fundamental = spectral_amplitude(frequency);
@@ -35,7 +36,7 @@ static void test_noise_spectra(void) {
     double expected = kind == NOISE_KIND_WHITE ? 0.0 : -1.0;
     assert(fabs(slope - expected) < 0.15);
     assert(fabs(mean / (8.0 * NOISE_SAMPLE_RATE_HZ * 32768.0)) < 0.01);
-    assert(a.state.clipped_samples == 0);
+    assert(a.state.limited_frames == 0);
   }
 }
 

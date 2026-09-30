@@ -286,9 +286,9 @@ int main(int argc, char **argv) {
   printf("%s: %u stereo frames, seed %" PRIu32 ", %.3f CPU seconds\n"
          "engine: %zu bytes; peak voices: %u/%u; drops: %" PRIu64
          "; capacity losses: %" PRIu64 "; thunder strikes: %" PRIu64
-         "; thunder losses: %" PRIu64 "; clipped samples: %" PRIu64 "\n",
+         "; thunder losses: %" PRIu64 "; limited frames: %" PRIu64 "\n",
          out_path, frames, seed, elapsed, sizeof(gen), gen.state.peak_active_drops,
          NOISE_MAX_DROPLETS, gen.state.generated_drops, gen.state.dropped_drops,
-         gen.state.generated_thunder, gen.state.dropped_thunder, gen.state.clipped_samples);
+         gen.state.generated_thunder, gen.state.dropped_thunder, gen.state.limited_frames);
   return 0;
 }

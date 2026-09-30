@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void test_validation(void) {
@@ -155,7 +156,7 @@ static void test_silence_and_chunks(void) {
   assert(a.state.generated_drops > 100);
   assert(a.state.generated_thunder == 1);
   assert(a.state.dropped_drops == 0);
-  assert(a.state.clipped_samples == 0);
+  assert(a.state.limited_frames == 0);
   assert(noise_init(&b, &c, 2) == NOISE_OK);
   noise_fill(&b, block, 257);
   assert(memcmp(block, audio, sizeof(block)) != 0);
@@ -175,7 +176,8 @@ static void test_random_stream_separation(void) {
   assert(adjacent_matches < 2);
 }
 
-static void test_output_saturation(void) {
+/* An overload the int16 range could not hold is limited, never clipped. */
+static void test_output_limiter(void) {
   noise_config c = silent_config();
   c.rain.gain = 1.0f;
   assert(noise_init(&a, &c, 13) == NOISE_OK);
@@ -186,12 +188,12 @@ static void test_output_saturation(void) {
   drop.velocity_m_s = 12.0f;
   for (unsigned i = 0; i < NOISE_MAX_DROPLETS; ++i) assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
   noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
-  assert(a.state.clipped_samples > 0);
-  uint64_t saturated = 0;
+  assert(a.state.limited_frames > 0);
+  int loudest = 0;
   for (unsigned i = 0; i < 2 * NOISE_SAMPLE_RATE_HZ; ++i) {
-    saturated += audio[i] == INT16_MAX || audio[i] == INT16_MIN;
+    if (abs(audio[i]) > loudest) loudest = abs(audio[i]);
   }
-  assert(saturated == a.state.clipped_samples);
+  assert(loudest > 0.8 * 32767.0 && loudest <= NOISE_LIMITER_CEILING * 32767.0f);
 }
 
 static void test_set_config(void) {
@@ -263,6 +265,6 @@ void run_engine_tests(void) {
   test_validation();
   test_silence_and_chunks();
   test_random_stream_separation();
-  test_output_saturation();
+  test_output_limiter();
   test_set_config();
 }

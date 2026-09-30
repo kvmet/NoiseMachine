@@ -22,7 +22,7 @@ static void test_cicada_levels(void) {
     cicada_stereo += audio[2 * n] != audio[2 * n + 1];
   }
   assert(cicada_stereo > NOISE_SAMPLE_RATE_HZ / 2);
-  assert(a.state.clipped_samples == 0);
+  assert(a.state.limited_frames == 0);
 }
 
 /* Mean frequency of the loud ringing parts of the left channel, from zero crossings. */
@@ -103,7 +103,7 @@ static void test_cicada_buzz(void) {
   double late = ring_frequency();
   /* The last second sweeps 7.5% to 15% down. */
   assert(steady > 4500.0 && late / steady > 0.82 && late / steady < 0.94);
-  assert(a.state.clipped_samples == 0);
+  assert(a.state.limited_frames == 0);
 }
 
 static void test_cicada_calls(void) {
@@ -158,7 +158,7 @@ static void test_cicada_space(void) {
         energy[run] += (double)audio[n] * audio[n];
       }
     }
-    assert(a.state.clipped_samples == 0);
+    assert(a.state.limited_frames == 0);
   }
   /* 8x the distance is 64x less energy. */
   assert(energy[0] / energy[1] > 50.0 && energy[0] / energy[1] < 80.0);
@@ -212,7 +212,7 @@ static void test_cicada_songs(void) {
         }
       }
     }
-    assert(a.state.clipped_samples == 0);
+    assert(a.state.limited_frames == 0);
     if (rate[species] == 0.0) continue;
     /* Syllable rhythm: the strongest envelope frequency over the syllables. */
     unsigned span = (unsigned)(100.0 * syllables / rate[species]) - 20;

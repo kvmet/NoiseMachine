@@ -70,6 +70,7 @@ noise_result noise_init(noise_gen *gen, const noise_config *config, uint32_t see
   noise_storm_init(&gen->storm, &gen->config.storm, &gen->state.weather, seed);
   noise_rain_init(&gen->rain, seed);
   noise_reverb_init(&gen->reverb);
+  noise_limiter_init(&gen->limiter);
   configure(gen, &gen->config);
   return NOISE_OK;
 }
@@ -97,18 +98,6 @@ noise_result noise_trigger_thunder(noise_gen *gen, const thunder_strike *strike)
   return noise_thunder_start(&gen->thunder, &gen->state, strike->position);
 }
 
-static int16_t to_sample(noise_state *state, float value) {
-  if (value > 1.0f) {
-    ++state->clipped_samples;
-    return INT16_MAX;
-  }
-  if (value < -1.0f) {
-    ++state->clipped_samples;
-    return INT16_MIN;
-  }
-  return (int16_t)(value * 32767.0f);
-}
-
 size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
   const noise_config *c = &gen->config;
   for (size_t frame = 0; frame < frames; ++frame) {
@@ -127,8 +116,11 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
     left += ambient;
     right += ambient;
     noise_wind_next(&gen->wind, &c->wind, &left, &right);
-    out[2 * frame] = to_sample(&gen->state, left * c->master_gain);
-    out[2 * frame + 1] = to_sample(&gen->state, right * c->master_gain);
+    left *= c->master_gain;
+    right *= c->master_gain;
+    gen->state.limited_frames += (uint64_t)noise_limiter_next(&gen->limiter, &left, &right);
+    out[2 * frame] = (int16_t)(left * 32767.0f);
+    out[2 * frame + 1] = (int16_t)(right * 32767.0f);
   }
   return frames;
 }

@@ -14,6 +14,7 @@
 #include "noise_cicadas.h"
 #include "noise_thunder.h"
 #include "noise_reverb.h"
+#include "noise_limiter.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,7 +23,7 @@ extern "C" {
 typedef struct noise_config {
   float master_gain;
   float ambient_gain[NOISE_KIND_COUNT]; /* Independent linear gains, each 0..1. */
-  float reverb_gain; /* Rain and insect sends are before distance attenuation. */
+  float reverb_gain; /* Rain and insect sends fade as 1/sqrt(distance). */
   noise_listener_config listener;
   noise_storm_config storm;
   noise_rain_config rain;
@@ -45,6 +46,7 @@ typedef struct noise_gen {
   noise_storm storm;
   noise_rain rain;
   noise_reverb reverb;
+  noise_limiter limiter;
 } noise_gen;
 
 /* What the weather is doing to each layer, for display. */
@@ -73,7 +75,8 @@ noise_result noise_set_config(noise_gen *gen, const noise_config *config);
 noise_result noise_trigger_drop(noise_gen *gen, const droplet *drop);
 /* Starts a strike at the listener. Call between fills on the audio thread. */
 noise_result noise_trigger_thunder(noise_gen *gen, const thunder_strike *strike);
-/* Writes 2 * frames interleaved int16 samples (L, R); returns frames. */
+/* Writes 2 * frames interleaved int16 samples (L, R); returns frames. A lookahead limiter
+   keeps peaks at -1 dBFS and delays the output by NOISE_LIMITER_FRAMES. */
 size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames);
 void noise_get_status(const noise_gen *gen, noise_status *status);
 

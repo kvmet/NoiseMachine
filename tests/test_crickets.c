@@ -69,7 +69,7 @@ static void test_cricket_rhythm(void) {
   for (unsigned i = 0; i < NOISE_CRICKET_VOICES; ++i) assert(longest[i] / shortest[i] < 1.07);
   double fraction = (double)singing / checks;
   assert(fraction > 0.6 && fraction < 0.9);
-  assert(a.state.clipped_samples == 0);
+  assert(a.state.limited_frames == 0);
 }
 
 static void test_cricket_pitch(void) {

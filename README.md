@@ -134,8 +134,8 @@ Run `./host/noise_host -h` for usage.
 - `-d SECONDS`: duration. Default: 10.
 
 The renderer reports CPU time, engine memory, peak voices, rejected drops,
-thunder strikes and rejections, and clipped channel samples. Reduce rate if the voice pool fills, or reduce
-gain if clipping occurs. File output ends at the requested duration; it does
+thunder strikes and rejections, and frames the output limiter turned down. Reduce
+rate if the voice pool fills, or reduce gain if the limiter works steadily. File output ends at the requested duration; it does
 not append a reverb tail or fade. The same seed and settings reproduce output
 within the same build, regardless of audio buffer size.
 

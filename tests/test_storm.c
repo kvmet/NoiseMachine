@@ -172,7 +172,7 @@ static double wall_power(float wind_m_s) {
     noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
     for (unsigned i = 0; i < 2 * NOISE_SAMPLE_RATE_HZ; ++i) power += (double)audio[i] * audio[i];
   }
-  assert(a.state.dropped_drops == 0 && a.state.clipped_samples == 0);
+  assert(a.state.dropped_drops == 0 && a.state.limited_frames == 0);
   return power;
 }
 
@@ -364,7 +364,7 @@ static void test_bed_gain(void) {
     c.rain.bed_gain = (float)k;
     assert(noise_init(&a, &c, 61) == NOISE_OK);
     noise_fill(&a, out[k], NOISE_SAMPLE_RATE_HZ);
-    assert(a.state.clipped_samples == 0);
+    assert(a.state.limited_frames == 0);
   }
   double bed = 0.0;
   for (unsigned i = 0; i < 2 * NOISE_SAMPLE_RATE_HZ; ++i) {
