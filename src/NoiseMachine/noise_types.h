@@ -5,6 +5,7 @@
 
 #define NOISE_SAMPLE_RATE_HZ 44100u
 #define NOISE_CHANNELS 2u
+#define NOISE_CONTROL_FRAMES 441u /* Weather updates 100 times a second. */
 
 typedef enum noise_result {
   NOISE_OK = 0,

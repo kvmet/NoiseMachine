@@ -13,6 +13,7 @@ noise_config silent_config(void) {
   c.reverb_gain = 0.0f;
   c.thunder.reverb_gain = 0.0f;
   c.master_gain = 1.0f;
+  c.rain.sheet_depth = 0.0f; /* Steady rain; sheet tests turn it on. */
   return c;
 }
 

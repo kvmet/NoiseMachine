@@ -64,6 +64,7 @@ static int mode_valid(const noise_surface_mode *m) {
 static int surface_valid(const noise_surface *s) {
   return memchr(s->name, '\0', sizeof(s->name)) != NULL &&
          in_range(s->coverage, 0.0f, 1000.0f) &&
+         s->vertical <= 1 &&
          in_range(s->click_gain_min, 0.0f, 2.0f) &&
          in_range(s->click_gain_max, s->click_gain_min, 2.0f) &&
          in_range(s->click_frequency_min_hz, 20.0f, 20000.0f) &&
@@ -86,6 +87,7 @@ int noise_rain_config_valid(const noise_rain_config *c) {
   if (!in_range(c->gain, 0.0f, 1.0f) ||
       !in_range(c->max_drops_per_s, 0.0f, 2000.0f) ||
       !in_range(c->bed_gain, 0.0f, 4.0f) ||
+      !in_range(c->sheet_depth, 0.0f, 2.0f) ||
       !in_range(c->min_distance_m, 0.25f, 100.0f) ||
       !in_range(c->max_distance_m, c->min_distance_m, 100.0f)) {
     return 0;
@@ -103,6 +105,7 @@ void noise_rain_config_default(noise_rain_config *c) {
   c->gain = 0.5f;
   c->max_drops_per_s = 900.0f;
   c->bed_gain = 1.0f;
+  c->sheet_depth = 1.0f;
   c->min_distance_m = 0.75f;
   c->max_distance_m = 5.0f;
   c->surface_count = NOISE_MAX_SURFACES;
@@ -128,14 +131,14 @@ static void bed_init(noise_rain_bed *bed, uint32_t seed) {
   for (unsigned band = 0; band < NOISE_BED_BANDS; ++band) {
     float center = BED_LOWEST_HZ * powf(BED_SPACING, (float)band);
     for (unsigned stage = 0; stage < NOISE_BED_STAGES; ++stage) {
-      biquad_tune(&bed->analysis[band][stage], 1, center, BED_Q);
       for (unsigned ear = 0; ear < NOISE_CHANNELS; ++ear) {
+        biquad_tune(&bed->analysis[ear][band][stage], 1, center, BED_Q);
         biquad_tune(&bed->synthesis[ear][band][stage], 1, center, BED_Q);
       }
     }
     /* Impulse response energy is the band's power for unit-variance white noise. */
     noise_biquad probe[NOISE_BED_STAGES];
-    memcpy(probe, bed->analysis[band], sizeof(probe));
+    memcpy(probe, bed->analysis[0][band], sizeof(probe));
     float energy = 0.0f;
     for (unsigned n = 0; n < 8192u; ++n) {
       float y = band_next(probe, n == 0 ? 1.0f : 0.0f);
@@ -154,7 +157,7 @@ static void bed_init(noise_rain_bed *bed, uint32_t seed) {
     for (unsigned band = 0; band < NOISE_BED_BANDS; ++band) {
       float gain = 1.0f;
       for (unsigned stage = 0; stage < NOISE_BED_STAGES; ++stage) {
-        gain *= biquad_power(&bed->analysis[band][stage], frequency);
+        gain *= biquad_power(&bed->analysis[0][band][stage], frequency);
       }
       bed->plateau += gain / (float)points;
     }
@@ -168,16 +171,6 @@ void noise_rain_init(noise_rain *rain, uint32_t seed) {
   bed_init(&rain->bed, seed);
 }
 
-void noise_rain_configure(noise_rain *rain, const noise_rain_config *c) {
-  float sum = 0.0f;
-  for (unsigned i = 0; i < c->surface_count; ++i) sum += c->surface[i].coverage;
-  float cumulative = 0.0f;
-  for (unsigned i = 0; i < c->surface_count; ++i) {
-    cumulative += c->surface[i].coverage;
-    rain->surface_cdf[i] = cumulative / sum;
-  }
-}
-
 /* Dingle-Lee fit reproduced in [1, section 4.1.1]; returns m/s. */
 static float terminal_speed(float diameter_mm) {
   float d = diameter_mm;
@@ -187,23 +180,70 @@ static float terminal_speed(float diameter_mm) {
   return 0.01f * cm_per_s;
 }
 
-/* Builds the flux-weighted size distribution: each bin holds N(D) v(D). */
+/* Builds the size distributions: falling onto the ground each bin holds N(D) v(D);
+   carried by the wind into a wall each holds N(D). */
 static void build_sizes(noise_rain *rain, float rain_mm_h) {
   rain->rain_mm_h = rain_mm_h;
   if (rain_mm_h <= 0.0f) {
     rain->flux_per_m2_s = 0.0f;
+    rain->concentration_per_m3 = 0.0f;
     return;
   }
   float lambda = 4.1f * powf(rain_mm_h, -0.21f);
-  float sum = 0.0f;
+  float flux = 0.0f, count = 0.0f;
   for (unsigned i = 0; i < NOISE_RAIN_SIZE_BINS; ++i) {
     float d = DIAMETER_MIN_MM + DIAMETER_BIN_MM * ((float)i + 0.5f);
-    sum += expf(-lambda * d) * terminal_speed(d);
-    rain->size_cdf[i] = sum;
+    float n = expf(-lambda * d);
+    flux += n * terminal_speed(d);
+    count += n;
+    rain->size_cdf[i] = flux;
+    rain->vertical_size_cdf[i] = count;
   }
-  for (unsigned i = 0; i < NOISE_RAIN_SIZE_BINS; ++i) rain->size_cdf[i] /= sum;
+  for (unsigned i = 0; i < NOISE_RAIN_SIZE_BINS; ++i) {
+    rain->size_cdf[i] /= flux;
+    rain->vertical_size_cdf[i] /= count;
+  }
   rain->size_cdf[NOISE_RAIN_SIZE_BINS - 1] = 1.0f;
-  rain->flux_per_m2_s = MP_N0 * DIAMETER_BIN_MM * sum;
+  rain->vertical_size_cdf[NOISE_RAIN_SIZE_BINS - 1] = 1.0f;
+  rain->flux_per_m2_s = MP_N0 * DIAMETER_BIN_MM * flux;
+  rain->concentration_per_m3 = MP_N0 * DIAMETER_BIN_MM * count;
+}
+
+/* Gust fraction of the air that passed the upwind edge age entries ago, interpolated. */
+static float sheet_gust(const noise_rain *rain, float age) {
+  age = fminf(fmaxf(age, 0.0f), (float)(NOISE_SHEET_HISTORY - 1));
+  unsigned whole = (unsigned)age;
+  unsigned newer = (rain->sheet_next + NOISE_SHEET_HISTORY - 1 - whole) % NOISE_SHEET_HISTORY;
+  unsigned older = (newer + NOISE_SHEET_HISTORY - 1) % NOISE_SHEET_HISTORY;
+  return rain->sheet[newer] + (age - (float)whole) * (rain->sheet[older] - rain->sheet[newer]);
+}
+
+static float sheet_factor(const noise_rain *rain, const noise_rain_config *c, float age) {
+  return fmaxf(0.0f, 1.0f + c->sheet_depth * sheet_gust(rain, age));
+}
+
+/* Rain rate at position over the mean; the ring's upwind edge sees the newest gust. */
+static float sheet_factor_at(const noise_rain *rain, const noise_rain_config *c,
+                             position_polar position) {
+  float upwind_m = position.distance_m * cosf(position.angle_rad - rain->upwind_rad);
+  return sheet_factor(rain, c, (rain->near_m - upwind_m) * rain->sheet_entries_per_m);
+}
+
+/* Candidates arrive at the peak sheet rate; spawn_rain keeps each in proportion to the
+   rate where it lands. Interpolation never exceeds its entries, so they bound the peak. */
+static void set_arrival_rate(noise_rain *rain, const noise_rain_config *c) {
+  float peak = 1.0f;
+  if (c->sheet_depth > 0.0f) {
+    float span = ceilf(2.0f * rain->near_m * rain->sheet_entries_per_m);
+    unsigned entries = span < (float)NOISE_SHEET_HISTORY ? (unsigned)span + 1 :
+                                                          NOISE_SHEET_HISTORY;
+    peak = 0.0f;
+    for (unsigned age = 0; age < entries; ++age) {
+      peak = fmaxf(peak, sheet_factor(rain, c, (float)age));
+    }
+  }
+  rain->sheet_peak = peak;
+  rain->arrival_probability = rain->played_per_s * peak / NOISE_SAMPLE_RATE_HZ;
 }
 
 /* Integral of r times the squared distance gain 1/max(1, r) over radius, without
@@ -214,36 +254,66 @@ static float ring_power(float r) {
 
 void noise_rain_follow(noise_rain *rain, const noise_rain_config *c, const noise_weather *weather) {
   if (weather->rain_mm_h != rain->rain_mm_h) build_sizes(rain, weather->rain_mm_h);
+  rain->wind_m_s = weather->wind_m_s;
+  /* Each second a square metre of wall facing the wind sweeps wind_m_s cubic metres of
+     air, against flux_per_m2_s drops landing on a square metre of ground. */
+  float wall_rate = rain->flux_per_m2_s > 0.0f ?
+      weather->wind_m_s * rain->concentration_per_m3 / rain->flux_per_m2_s : 0.0f;
+  float coverage = 0.0f, weight = 0.0f;
+  for (unsigned i = 0; i < c->surface_count; ++i) {
+    coverage += c->surface[i].coverage;
+    weight += c->surface[i].coverage * (c->surface[i].vertical ? wall_rate : 1.0f);
+    rain->surface_cdf[i] = weight;
+  }
+  if (weight > 0.0f) {
+    for (unsigned i = 0; i < c->surface_count; ++i) rain->surface_cdf[i] /= weight;
+  }
+  float hits_per_m2_s = rain->flux_per_m2_s * weight / coverage;
   float near = c->min_distance_m, far = c->max_distance_m;
-  float arrivals = rain->flux_per_m2_s * NOISE_PI * (far * far - near * near);
+  float arrivals = hits_per_m2_s * NOISE_PI * (far * far - near * near);
   rain->arrivals_per_s = arrivals;
   float played = fminf(arrivals, c->max_drops_per_s);
-  rain->arrival_probability = played / NOISE_SAMPLE_RATE_HZ;
+  rain->played_per_s = played;
   noise_rain_bed *bed = &rain->bed;
   rain->near_m = far;
   bed->ratio = 0.0f;
   if (played > 0.0f && played < arrivals) {
-    rain->near_m = fminf(far, sqrtf(near * near + played / (NOISE_PI * rain->flux_per_m2_s)));
+    rain->near_m = fminf(far, sqrtf(near * near + played / (NOISE_PI * hits_per_m2_s)));
     bed->ratio = (ring_power(far) - ring_power(rain->near_m)) /
                  (ring_power(rain->near_m) - ring_power(near));
   }
+  rain->upwind_rad = weather->wind_bearing_rad;
+  const float entries_per_s = (float)NOISE_SAMPLE_RATE_HZ /
+                              (float)(NOISE_CONTROL_FRAMES * NOISE_SHEET_STEP);
+  /* The floor keeps calm air finite; its sheets then reuse the oldest entry. */
+  rain->sheet_entries_per_m = entries_per_s / fmaxf(weather->wind_mean_m_s, 0.01f);
+  set_arrival_rate(rain, c);
   for (unsigned band = 0; band < NOISE_BED_BANDS; ++band) {
     bed->gain_scale[band] = bed->ratio /
         (BED_NOISE_VARIANCE * bed->unit_power[band] * bed->plateau);
   }
 }
 
-void noise_rain_update_bed(noise_rain *rain) {
+void noise_rain_tick(noise_rain *rain, const noise_rain_config *c, const noise_weather *weather) {
+  if (++rain->sheet_step == NOISE_SHEET_STEP) {
+    rain->sheet_step = 0;
+    rain->sheet[rain->sheet_next] = weather->wind_mean_m_s > 0.0f ?
+        weather->wind_m_s / weather->wind_mean_m_s - 1.0f : 0.0f;
+    rain->sheet_next = (rain->sheet_next + 1) % NOISE_SHEET_HISTORY;
+    set_arrival_rate(rain, c);
+  }
   noise_rain_bed *bed = &rain->bed;
-  for (unsigned band = 0; band < NOISE_BED_BANDS; ++band) {
-    bed->gain[band] = sqrtf(bed->gain_scale[band] * bed->power[band]);
+  for (unsigned ear = 0; ear < NOISE_CHANNELS; ++ear) {
+    for (unsigned band = 0; band < NOISE_BED_BANDS; ++band) {
+      bed->gain[ear][band] = sqrtf(bed->gain_scale[band] * bed->power[ear][band]);
+    }
   }
 }
 
 int noise_drop_valid(const noise_rain_config *c, const droplet *drop) {
   return drop->surface < c->surface_count &&
          in_range(drop->radius_m, 0.0004f, 0.0029f) &&
-         in_range(drop->velocity_m_s, 0.0f, 12.0f) &&
+         in_range(drop->velocity_m_s, 0.0f, 40.0f) &&
          in_range(drop->position.distance_m, 0.25f, 100.0f) &&
          in_range(drop->position.angle_rad, -2.0f * NOISE_PI, 2.0f * NOISE_PI) &&
          (drop->bubble_radius_m == 0.0f ||
@@ -312,29 +382,33 @@ static unsigned choose_surface(noise_rain *rain, const noise_rain_config *c) {
   return surface;
 }
 
-static float sample_diameter_mm(noise_rain *rain) {
-  float choice = random_unit(&rain->drop_rng);
+/* choice picks the bin from cdf; offset places the diameter within it. */
+static float diameter_mm(const float cdf[NOISE_RAIN_SIZE_BINS], float choice, float offset) {
   unsigned low = 0, high = NOISE_RAIN_SIZE_BINS - 1;
   while (low < high) {
     unsigned middle = (low + high) / 2;
-    if (choice < rain->size_cdf[middle]) {
+    if (choice < cdf[middle]) {
       high = middle;
     } else {
       low = middle + 1;
     }
   }
-  return DIAMETER_MIN_MM + DIAMETER_BIN_MM * ((float)low + random_unit(&rain->drop_rng));
+  return DIAMETER_MIN_MM + DIAMETER_BIN_MM * ((float)low + offset);
 }
 
 static void spawn_rain(noise_rain *rain, noise_state *state, const noise_rain_config *c,
                        const noise_listener_config *listener) {
-  float diameter_mm = sample_diameter_mm(rain);
+  float size_choice = random_unit(&rain->drop_rng);
+  float size_offset = random_unit(&rain->drop_rng);
   droplet drop;
-  drop.radius_m = diameter_mm * 0.0005f;
-  drop.velocity_m_s = terminal_speed(diameter_mm);
   drop.surface = choose_surface(rain, c);
-  drop.bubble_radius_m = 0.0f;
   const noise_surface *s = &c->surface[drop.surface];
+  float diameter = diameter_mm(s->vertical ? rain->vertical_size_cdf : rain->size_cdf,
+                               size_choice, size_offset);
+  drop.radius_m = diameter * 0.0005f;
+  /* Drops in the wind move with the air, so a wall meets them at the wind speed. */
+  drop.velocity_m_s = s->vertical ? rain->wind_m_s : terminal_speed(diameter);
+  drop.bubble_radius_m = 0.0f;
   if (s->bubble_probability > 0.0f && random_unit(&rain->drop_rng) < s->bubble_probability) {
     drop.bubble_radius_m = s->bubble_radius_min_m < s->bubble_radius_max_m ?
         random_log_between(&rain->drop_rng, s->bubble_radius_min_m, s->bubble_radius_max_m) :
@@ -343,22 +417,25 @@ static void spawn_rain(noise_rain *rain, noise_state *state, const noise_rain_co
   drop.position.distance_m = area_uniform_distance(c->min_distance_m, rain->near_m,
                                                    random_unit(&rain->drop_rng));
   drop.position.angle_rad = 2.0f * NOISE_PI * random_unit(&rain->drop_rng);
+  if (c->sheet_depth > 0.0f &&
+      random_unit(&rain->drop_rng) * rain->sheet_peak >= sheet_factor_at(rain, c, drop.position)) {
+    return;
+  }
   /* Capacity losses are recorded by noise_rain_start_drop for both arrival paths. */
   (void)noise_rain_start_drop(rain, state, c, listener, &drop);
 }
 
-/* Measures one ear of the played rain per band and adds matched noise to both ears.
-   Drops arrive evenly around the listener, so either ear gives the per-ear power. */
-static void bed_next(noise_rain_bed *bed, float played, float gain, noise_bus *bus) {
-  for (unsigned band = 0; band < NOISE_BED_BANDS; ++band) {
-    float y = band_next(bed->analysis[band], played);
-    bed->power[band] += BED_SMOOTHING * (y * y - bed->power[band]);
-  }
+/* Measures each ear's played rain per band and adds matched noise to that ear, so the
+   bed follows sheets that favor one side. */
+static void bed_next(noise_rain_bed *bed, const float played[NOISE_CHANNELS], float gain,
+                     noise_bus *bus) {
   for (unsigned ear = 0; ear < NOISE_CHANNELS; ++ear) {
     float sum = 0.0f;
     for (unsigned band = 0; band < NOISE_BED_BANDS; ++band) {
+      float y = band_next(bed->analysis[ear][band], played[ear]);
+      bed->power[ear][band] += BED_SMOOTHING * (y * y - bed->power[ear][band]);
       float noise = 2.0f * random_unit(&bed->rng) - 1.0f;
-      sum += bed->gain[band] * band_next(bed->synthesis[ear][band], noise);
+      sum += bed->gain[ear][band] * band_next(bed->synthesis[ear][band], noise);
     }
     bus->direct[ear][bus->position] += gain * sum;
   }
@@ -398,12 +475,12 @@ float noise_rain_next(noise_rain *rain, noise_state *state, const noise_rain_con
       ++i;
     }
   }
-  float played[2];
+  float played[NOISE_CHANNELS];
   noise_bus_next(&rain->bus, &played[0], &played[1]);
   for (unsigned ear = 0; ear < NOISE_CHANNELS; ++ear) {
     bus->direct[ear][bus->position] += c->gain * played[ear];
   }
   float bed_gain = c->gain * c->bed_gain;
-  if (rain->bed.ratio > 0.0f && bed_gain > 0.0f) bed_next(&rain->bed, played[0], bed_gain, bus);
+  if (rain->bed.ratio > 0.0f && bed_gain > 0.0f) bed_next(&rain->bed, played, bed_gain, bus);
   return send;
 }

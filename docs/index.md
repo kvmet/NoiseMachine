@@ -123,7 +123,10 @@ rate is the smaller of the budget and the physical rate over the annulus
 between the distance bounds. Played drops land in the near ring from
 `min_distance_m` to the radius that the budget fills at the physical density:
 
-    near_m = sqrt(r_min² + played / (π × flux)),  at most r_max
+    near_m = sqrt(r_min² + played / (π × hits)),  at most r_max
+
+where hits is the drops per m² per second on the surfaces, including walls
+(see Driving rain).
 
 When the budget covers the whole annulus, near_m is r_max and every drop
 plays. Otherwise the rain bed stands in for the drops beyond near_m.
@@ -147,6 +150,39 @@ Glass 0.005, and Metal 0.005. Plastic, Asphalt, and Asphalt roof default to
 zero. Coverage sets the share of drops on each surface; it does not place
 surfaces around the listener.
 
+### Driving rain
+
+A surface with `vertical` set is a wall facing the wind. Falling rain misses
+it; the wind carries drops into it. Each second, a square metre of wall
+sweeps wind-speed cubic metres of air, so it takes U × C drops, where U is
+the wind with gusts and C = Σ N(D) ΔD is the drops per cubic metre. A
+square metre of ground takes the flux F = Σ N(D) v(D) ΔD. A wall's coverage
+therefore weighs U × C / F against a horizontal surface's 1: zero in calm
+air, and about 2.5 at 10 m/s in 10 mm/h rain. hits is F × (the sum of
+weighted coverage) / (the sum of coverage), so walls add to the arrival
+rate. Wall drops take their size from N(D) alone, with more small drops than
+the ground, and strike at the wind speed on the assumption that drops move
+with the air.
+
+### Rain sheets
+
+Gusts carry sheets of heavier and lighter rain across the listener. Every
+10 weather updates (10 Hz), the rain records the gust fraction
+g = wind / mean − 1 in a history of 512 entries (51 s). Air at upwind
+distance a from the listener passed the ring's upwind edge (near_m − a) /
+mean seconds ago; mean is the mean wind. The rain rate there is
+
+    factor = max(0, 1 + rain.sheet_depth × g(then))
+
+Air older than the history uses the oldest entry; calm air counts as
+0.01 m/s. Candidate drops arrive at played × peak, where peak is the
+largest factor across the played ring. Each candidate lands at a uniform
+position and plays with probability factor / peak there. Sheets therefore
+reach the windward ear first. Across a 2.2 m ring at 4 m/s, the right ear
+leads the left by about 0.4 s with wind from the right. The mean played
+rate stays near the budget, but a sheet's peak can exceed it. Depth zero
+skips the extra draw, and gusts then leave the rain unchanged.
+
 The azimuth is uniform over a circle. Radial distance is
 
     r = sqrt(r_min² + u(near_m² - r_min²)),  u uniform in [0, 1)
@@ -162,12 +198,12 @@ drops keep their coefficients.
 The bed plays the drops beyond near_m as noise matched to the played rain.
 It is a vocoder with 15 bands at half-octave spacing from 125 Hz to 16 kHz.
 Each band is two cascaded band-pass biquads with Q 1.414; this spacing keeps
-the summed response flat within about 2 dB. Analysis runs on the left ear of
+the summed response flat within about 2 dB. Analysis runs on each ear of
 the played rain after spatial processing, so it carries distance gain, head
-shadow, and the rear filter. Drops arrive evenly around the listener, so one
-ear gives the power for both. Each band's power P_b is smoothed with a 0.5 s
-time constant. Synthesis passes independent uniform noise per band and ear
-through the same filters, at gain
+shadow, and the rear filter. Each ear's bed follows that ear's drops, so it
+follows sheets that favor one side. Each band's power P_b is smoothed with a
+0.5 s time constant. Synthesis passes independent uniform noise per band and
+ear through the same filters, at gain
 
     g_b = sqrt(ratio × P_b / (σ² × U_b × plateau))
 
@@ -195,8 +231,9 @@ and the polynomial result is in centimetres per second:
     d > 1.4:  V_T =  24.1660 + 448.8336d - 75.6265d² + 4.2695d³
 
 Multiply by 0.01 to obtain m/s. For example, a 1 mm drop has a terminal
-speed of about 4.015 m/s. Automatic drops land at terminal speed. Manual
-arrivals supply their own velocity.
+speed of about 4.015 m/s. Automatic drops land at terminal speed, or at
+the wind speed on a vertical surface. Manual arrivals supply their own
+velocity.
 
 Mass is proportional to radius cubed, and kinetic energy is mV²/2.
 The source amplitude follows the square root of relative kinetic energy:
@@ -307,6 +344,7 @@ material constants or solutions for a particular object shape.
 | `surface_count` | 1 to 9 |
 | `name` | NUL within 16 bytes |
 | `coverage` | 0 to 1000; at least one used surface above zero |
+| `vertical` | 0 or 1 |
 | `click_gain_min`, `click_gain_max` | 0 to 2 |
 | `click_frequency_min_hz`, `click_frequency_max_hz` | 20 to 20000 Hz |
 | `click_damping_ratio` | 0.05 to 50 |
@@ -636,7 +674,8 @@ after it; they are not fitted to measurements.
 
 Each module reads the weather at every update.
 
-- Rain: arrival rate, drop sizes, near ring, and bed, as above.
+- Rain: arrival rate, drop sizes, near ring, bed, wall share, and sheets, as
+  above.
 - Wind: level is `wind.gain` × (min(speed, 35) / 20)², so the gain is the
   level at 20 m/s and level rises 12 dB per doubling of speed. This is a
   fitted curve, not a flow model. Brightness b = min(1, speed / 30) sets the
@@ -698,7 +737,7 @@ voices busy returns `NOISE_VOICE_LIMIT`.
 `noise_trigger_drop` accepts a physical drop at the listener's arrival
 time on surface index `surface`. It validates the index against
 `rain.surface_count`, radius
-(0.4 to 2.9 mm), velocity (0 to 12 m/s), distance (0.25 to 100 m), angle
+(0.4 to 2.9 mm), velocity (0 to 40 m/s), distance (0.25 to 100 m), angle
 (negative 2π to positive 2π), and bubble radius (zero, or 0.16 to 4 mm).
 Zero velocity succeeds without allocating a voice. Invalid drops leave
 the engine unchanged. Call it between fills from the same audio thread.
@@ -740,6 +779,7 @@ Configuration ranges are:
   summing to at most 1. Approach 10 to 100 km. Miss 0 to 30 km. Heading
   spread 0 to π.
 - Played drop budget: 0 to 2000/s, default 900. Bed gain: 0 to 4, default 1.
+  Sheet depth: 0 to 2, default 1.
 - Rain distance bounds: 0.25 to 100 m, ordered; equal bounds make a ring.
 - Stereo width: 0 to 0.5 m; head and rear amounts: 0 to 1.
 - Surface fields: see the table under Surfaces.
@@ -761,7 +801,7 @@ and peak voice count.
 ## ESP32 and validation
 
 The sample rate, channel count, and pool size are compile-time constants.
-The engine occupies 105,168 bytes with the tested host ABI, plus 1,024
+The engine occupies 108,448 bytes with the tested host ABI, plus 1,024
 bytes for a 256-frame PCM buffer. Confirm `sizeof(noise_gen)` on the
 target ABI. Keep the generator in static storage, not a small task stack. Buffers are
 caller-owned. Trigonometry, exponentials, and square roots for drops run
@@ -781,10 +821,11 @@ temporary directory using the system C/C++ compilers, without adding
 project dependencies. Checks cover analytic bubble frequency and decay,
 hum fundamentals and harmonics, spectral slopes, rain arrivals against the
 Marshall-Palmer flux, drop sizes against its distribution, the bed against
-played rain, a storm passage, time scale, gusts, insect and thunder
+played rain, driving rain rate, sizes, and impact speed, sheets that follow
+the wind bearing, the bed per ear, a storm passage, time scale, gusts, insect and thunder
 couplings, voice exhaustion and recycling, silence, block-size
 independence, malformed CLI values, WAV headers, all nine surfaces at
-150 mm/h without clipping, and
+150 mm/h without clipping and with under 1% of drops lost to the voice pool, and
 linking the sketch against the C engine. Spatial checks cover rendered
 phase, ear symmetry, head shelf gain, width bypass, distance gain,
 reverb-send independence, rear filtering, and maximum delay bounds.

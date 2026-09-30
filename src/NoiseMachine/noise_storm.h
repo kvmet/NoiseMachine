@@ -4,7 +4,6 @@
 #include "noise_types.h"
 
 #define NOISE_STORM_CELLS 2u
-#define NOISE_CONTROL_FRAMES 441u /* Weather updates 100 times a second. */
 
 /* Weather held while noise_storm_config.manual is set. */
 typedef struct noise_fixed_weather {

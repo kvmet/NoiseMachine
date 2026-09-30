@@ -177,6 +177,7 @@ const gui_control gui_controls[CONTROL_COUNT] = {
                                     0.25f, 100.0f, "%.3f"),
   [CONTROL_RAIN_MAX_DISTANCE] = LOG("Maximum distance (m)", rain.max_distance_m,
                                     0.25f, 100.0f, "%.3f"),
+  [CONTROL_SHEET_DEPTH] = LINEAR("Gust sheet depth", rain.sheet_depth, 0.0f, 2.0f, "%.2f"),
 
   /* The coverage slider spans 1e-5 to 1; its bottom position means zero. */
   [CONTROL_SURFACE_COVERAGE] = {"Coverage", SURFACE(coverage), 0.0f, 1.0f, 1e-5f,

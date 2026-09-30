@@ -94,6 +94,7 @@ typedef enum gui_control_id {
   CONTROL_DROP_RATE,
   CONTROL_RAIN_MIN_DISTANCE,
   CONTROL_RAIN_MAX_DISTANCE,
+  CONTROL_SHEET_DEPTH,
   /* Fields of the selected surface. */
   CONTROL_SURFACE_COVERAGE,
   CONTROL_CLICK_GAIN_MIN,

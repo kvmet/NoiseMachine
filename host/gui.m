@@ -34,6 +34,7 @@
   unsigned _surface;    /* Surface shown by GUI_SCOPE_SURFACE controls. */
   NSMutableArray<NSPopUpButton *> *_surfacePickers;
   NSTextField *_nameField;
+  NSButton *_verticalBox;
   NSButton *_addButton;
   NSButton *_deleteButton;
   audio_output *_output;
@@ -204,13 +205,16 @@
   for (NSPopUpButton *picker in _surfacePickers) {
     [picker.menu removeAllItems];
     for (unsigned i = 0; i < rain->surface_count; ++i) {
-      NSString *title = [NSString stringWithFormat:@"%s (%.3g%%)", rain->surface[i].name,
-                         100.0 * rain->surface[i].coverage / total];
+      NSString *title = [NSString stringWithFormat:@"%s (%.3g%%%@)", rain->surface[i].name,
+                         100.0 * rain->surface[i].coverage / total,
+                         rain->surface[i].vertical ? @", vertical" : @""];
       [picker.menu addItemWithTitle:title action:NULL keyEquivalent:@""];
     }
     [picker selectItemAtIndex:_surface];
   }
   _nameField.stringValue = @(rain->surface[_surface].name);
+  _verticalBox.state = rain->surface[_surface].vertical ? NSControlStateValueOn :
+                                                          NSControlStateValueOff;
   _addButton.enabled = rain->surface_count < NOISE_MAX_SURFACES;
   _deleteButton.enabled = rain->surface_count > 1;
 }
@@ -256,6 +260,12 @@
 - (void)renameSurface:(NSTextField *)sender {
   const char *note = gui_surface_rename(&_config, _surface, sender.stringValue.UTF8String);
   if (note) _statusLabel.stringValue = @(note);
+  [self showSurfaceList];
+  [self publishConfig];
+}
+
+- (void)verticalChanged:(NSButton *)sender {
+  _config.rain.surface[_surface].vertical = sender.state == NSControlStateValueOn;
   [self showSurfaceList];
   [self publishConfig];
 }
@@ -473,7 +483,10 @@
   _nameField.cell.sendsActionOnEndEditing = YES;
   [_nameField.widthAnchor constraintEqualToConstant:200.0].active = YES;
   NSView *name = [self rowWithViews:@[[self rowLabel:@"Name" width:LABEL_WIDTH], _nameField]];
-  return @[picker, name, [self row:CONTROL_SURFACE_COVERAGE]];
+  _verticalBox = [NSButton checkboxWithTitle:@"Vertical: hit by wind-driven rain"
+                                      target:self action:@selector(verticalChanged:)];
+  NSView *vertical = [self rowWithViews:@[[self rowLabel:@"" width:LABEL_WIDTH], _verticalBox]];
+  return @[picker, name, [self row:CONTROL_SURFACE_COVERAGE], vertical];
 }
 
 - (NSView *)cicadaSpeciesRow {
@@ -570,7 +583,7 @@
   NSView *thunder = [self tabViewWithRows:thunderRows];
 
   NSMutableArray<NSView *> *rainRows = [NSMutableArray arrayWithArray:
-      [self rowsFrom:CONTROL_DROP_RATE count:3]];
+      [self rowsFrom:CONTROL_DROP_RATE count:4]];
   [rainRows addObject:[self sectionLabel:@"Surfaces"]];
   _surfacePickers = [NSMutableArray array];
   [rainRows addObjectsFromArray:[self surfaceEditorRows]];

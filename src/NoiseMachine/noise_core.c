@@ -53,7 +53,6 @@ static void configure(noise_gen *gen, const noise_config *previous) {
   noise_cicadas_configure(&gen->cicadas, &c->cicadas);
   noise_thunder_configure(&gen->thunder, &c->thunder);
   noise_storm_configure(&gen->storm, &previous->storm, &c->storm, &gen->state.weather);
-  noise_rain_configure(&gen->rain, &c->rain);
   follow_weather(gen);
 }
 
@@ -115,7 +114,7 @@ size_t noise_fill(noise_gen *gen, int16_t *out, size_t frames) {
   for (size_t frame = 0; frame < frames; ++frame) {
     if (noise_storm_next(&gen->storm, &c->storm, &gen->state.weather)) {
       follow_weather(gen);
-      noise_rain_update_bed(&gen->rain);
+      noise_rain_tick(&gen->rain, &c->rain, &gen->state.weather);
     }
     float send = noise_rain_next(&gen->rain, &gen->state, &c->rain, &c->listener, &gen->bus);
     send += noise_crickets_next(&gen->crickets, &c->crickets, &c->listener, &gen->bus);
@@ -138,7 +137,7 @@ void noise_get_status(const noise_gen *gen, noise_status *status) {
   const noise_rain *rain = &gen->rain;
   status->weather = gen->state.weather;
   status->rain_arrivals_per_s = rain->arrivals_per_s;
-  status->rain_played_per_s = rain->arrival_probability * NOISE_SAMPLE_RATE_HZ;
+  status->rain_played_per_s = rain->played_per_s;
   status->bed_share = rain->bed.ratio / (1.0f + rain->bed.ratio);
   status->wind_level = gen->wind.relative_level;
   status->cricket_rate_hz = gen->crickets.call_rate_hz;

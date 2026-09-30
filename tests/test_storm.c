@@ -22,6 +22,16 @@ static double flux_below(double rain_mm_h, double diameter_mm) {
   return sum;
 }
 
+/* Marshall-Palmer drops of 0.8 mm up to diameter in a cubic metre of air. */
+static double concentration_below(double rain_mm_h, double diameter_mm) {
+  double lambda = 4.1 * pow(rain_mm_h, -0.21);
+  double sum = 0.0, step = 0.001;
+  for (double d = 0.8 + 0.5 * step; d < diameter_mm; d += step) {
+    sum += 8000.0 * exp(-lambda * d) * step;
+  }
+  return sum;
+}
+
 static void test_rain_arrivals(void) {
   noise_config c = silent_config();
   c.storm.fixed.rain_mm_h = 2.0f;
@@ -102,6 +112,170 @@ static void test_bed_matches_played_rain(void) {
   }
   assert(fabs(level[1] - level[0]) < 1.5);
   assert(fabs(bright[1] / bright[0] - 1.0) < 0.1);
+}
+
+/* A wall facing the wind takes the drops the wind carries into it, and none in calm air. */
+static void test_driving_rain(void) {
+  noise_config c = silent_config();
+  c.storm.fixed.rain_mm_h = 10.0f;
+  c.storm.fixed.wind_m_s = 0.0f;
+  c.storm.gust_intensity = 0.0f;
+  c.rain.surface_count = 2;
+  c.rain.surface[0] = c.rain.surface[CONCRETE];
+  c.rain.surface[1] = c.rain.surface[METAL];
+  c.rain.surface[0].coverage = 1.0f;
+  c.rain.surface[1].coverage = 1.0f;
+  c.rain.surface[1].vertical = 1;
+  assert(noise_init(&a, &c, 83) == NOISE_OK);
+  double area = TEST_PI * (5.0 * 5.0 - 0.75 * 0.75);
+  double ground = flux_below(10.0, 5.8) * area / 2.0;
+  assert(a.rain.surface_cdf[0] == 1.0f);
+  assert(fabs(a.rain.arrivals_per_s / ground - 1.0) < 0.01);
+
+  c.storm.fixed.wind_m_s = 10.0f;
+  assert(noise_set_config(&a, &c) == NOISE_OK);
+  double wall = 10.0 * concentration_below(10.0, 5.8) / flux_below(10.0, 5.8);
+  assert(wall > 1.5 && wall < 4.0);
+  assert(fabs(a.rain.surface_cdf[0] - 1.0 / (1.0 + wall)) < 0.01);
+  assert(fabs(a.rain.arrivals_per_s / (ground * (1.0 + wall)) - 1.0) < 0.01);
+  /* Wind-driven sizes follow N(D) alone, so walls take more small drops. */
+  double total = concentration_below(10.0, 5.8);
+  for (unsigned bin = 4; bin < NOISE_RAIN_SIZE_BINS; bin += 5) {
+    double edge = 0.8 + 0.1 * (bin + 1);
+    assert(fabs(a.rain.vertical_size_cdf[bin] - concentration_below(10.0, edge) / total) < 0.01);
+  }
+  assert(a.rain.vertical_size_cdf[9] > a.rain.size_cdf[9] + 0.03f);
+
+  /* A wall alone is silent in calm air. */
+  c.rain.surface[0].coverage = 0.0f;
+  c.storm.fixed.wind_m_s = 0.0f;
+  assert(noise_init(&a, &c, 83) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+  assert(a.rain.arrivals_per_s == 0.0f && a.state.generated_drops == 0);
+}
+
+/* Rain on a wall alone, every drop played. */
+static double wall_power(float wind_m_s) {
+  noise_config c = silent_config();
+  c.storm.fixed.rain_mm_h = 1.0f;
+  c.storm.fixed.wind_m_s = wind_m_s;
+  c.storm.gust_intensity = 0.0f;
+  c.rain.max_distance_m = 1.0f;
+  c.rain.max_drops_per_s = 2000.0f;
+  c.rain.surface_count = 1;
+  c.rain.surface[0] = c.rain.surface[GLASS];
+  c.rain.surface[0].vertical = 1;
+  assert(noise_init(&a, &c, 89) == NOISE_OK);
+  assert(a.rain.bed.ratio == 0.0f);
+  double power = 0.0;
+  for (unsigned second = 0; second < 10; ++second) {
+    noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
+    for (unsigned i = 0; i < 2 * NOISE_SAMPLE_RATE_HZ; ++i) power += (double)audio[i] * audio[i];
+  }
+  assert(a.state.dropped_drops == 0 && a.state.clipped_samples == 0);
+  return power;
+}
+
+/* Walls meet drops at the wind speed, so doubling it doubles the hits and each hit's
+   amplitude: eight times the power. At terminal speed it would only double. */
+static void test_wall_impact_speed(void) {
+  double ratio = wall_power(10.0f) / wall_power(5.0f);
+  assert(ratio > 5.0 && ratio < 12.0);
+}
+
+/* With sheets off, gusts leave the rain untouched; with them on, gusts change it. */
+static void test_sheet_depth(void) {
+  static int16_t out[3][2 * NOISE_SAMPLE_RATE_HZ];
+  static const float gusts[3] = {0.0f, 0.5f, 0.5f};
+  noise_config c = silent_config();
+  c.storm.fixed.rain_mm_h = 10.0f;
+  c.storm.fixed.wind_m_s = 10.0f;
+  for (unsigned run = 0; run < 3; ++run) {
+    c.storm.gust_intensity = gusts[run];
+    c.rain.sheet_depth = run == 2 ? 1.0f : 0.0f;
+    assert(noise_init(&a, &c, 97) == NOISE_OK);
+    for (unsigned second = 0; second < 3; ++second) noise_fill(&a, out[run], NOISE_SAMPLE_RATE_HZ);
+  }
+  assert(memcmp(out[0], out[1], sizeof(out[0])) == 0);
+  assert(memcmp(out[1], out[2], sizeof(out[1])) != 0);
+}
+
+/* Seconds by which the right ear's rain level leads the left's, from 50 ms windows. */
+static double sheet_lead_s(float wind_bearing_rad) {
+  enum { WINDOW = NOISE_SAMPLE_RATE_HZ / 20, WINDOWS = 2400, MAX_LAG = 20 };
+  static double power[2][WINDOWS];
+  noise_config c = silent_config();
+  c.rain.gain = 1.0f;
+  c.rain.bed_gain = 0.0f;
+  c.rain.sheet_depth = 2.0f;
+  c.rain.max_distance_m = 8.0f;
+  c.rain.max_drops_per_s = 2000.0f;
+  c.storm.fixed.rain_mm_h = 0.5f;
+  c.storm.fixed.wind_m_s = 4.0f;
+  c.storm.fixed.wind_bearing_rad = wind_bearing_rad;
+  c.storm.gust_intensity = 0.5f;
+  c.storm.gust_time_s = 2.0f;
+  assert(noise_init(&a, &c, 5) == NOISE_OK);
+  double mean[2] = {0.0, 0.0};
+  for (unsigned w = 0; w < WINDOWS; ++w) {
+    noise_fill(&a, audio, WINDOW);
+    for (unsigned ear = 0; ear < 2; ++ear) {
+      power[ear][w] = 0.0;
+      for (unsigned n = 0; n < WINDOW; ++n) {
+        power[ear][w] += (double)audio[2 * n + ear] * audio[2 * n + ear];
+      }
+      mean[ear] += power[ear][w] / WINDOWS;
+    }
+  }
+  int best = 0;
+  double best_correlation = -1.0;
+  for (int lag = -MAX_LAG; lag <= MAX_LAG; ++lag) {
+    double product = 0.0, right = 0.0, left = 0.0;
+    for (int w = MAX_LAG; w < WINDOWS - MAX_LAG; ++w) {
+      double r = power[1][w] - mean[1], l = power[0][w + lag] - mean[0];
+      product += r * l;
+      right += r * r;
+      left += l * l;
+    }
+    double correlation = product / sqrt(right * left);
+    if (correlation > best_correlation) {
+      best_correlation = correlation;
+      best = lag;
+    }
+  }
+  assert(best_correlation > 0.2);
+  return best / 20.0;
+}
+
+/* Sheets reach the windward ear first. Across the 2.2 m played ring at 4 m/s, the
+   half-ring centroids are about 0.45 s apart. */
+static void test_sheets_travel_with_wind(void) {
+  double from_right = sheet_lead_s(0.5f * (float)TEST_PI);
+  double from_left = sheet_lead_s(-0.5f * (float)TEST_PI);
+  double from_front = sheet_lead_s(0.0f);
+  assert(from_right > 0.15 && from_right < 0.8);
+  assert(from_left < -0.15 && from_left > -0.8);
+  assert(fabs(from_front) <= 0.1);
+}
+
+/* Each ear's bed follows that ear's drops. */
+static void test_bed_follows_each_ear(void) {
+  noise_config c = silent_config();
+  c.rain.max_drops_per_s = 1.0f;
+  c.storm.fixed.rain_mm_h = 10.0f;
+  assert(noise_init(&a, &c, 101) == NOISE_OK);
+  assert(a.rain.bed.ratio > 0.0f);
+  droplet drop = water_drop();
+  drop.position.angle_rad = 0.5f * (float)TEST_PI;
+  for (unsigned n = 0; n < 100; ++n) {
+    assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
+    noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ / 50);
+  }
+  double gain[2] = {0.0, 0.0};
+  for (unsigned ear = 0; ear < 2; ++ear) {
+    for (unsigned band = 0; band < NOISE_BED_BANDS; ++band) gain[ear] += a.rain.bed.gain[ear][band];
+  }
+  assert(gain[1] > 1.5 * gain[0]);
 }
 
 /* Places a severity 1 cell 30 km in front, heading straight over the listener. */
@@ -365,6 +539,11 @@ void run_storm_tests(void) {
   test_rain_arrivals();
   test_drop_sizes();
   test_bed_matches_played_rain();
+  test_driving_rain();
+  test_wall_impact_speed();
+  test_sheet_depth();
+  test_sheets_travel_with_wind();
+  test_bed_follows_each_ear();
   test_storm_passage();
   test_storm_shape();
   test_bed_gain();
