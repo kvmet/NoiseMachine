@@ -47,6 +47,7 @@ typedef struct noise_surface_mode {
 typedef struct noise_surface {
   char name[NOISE_SURFACE_NAME_SIZE]; /* NUL-terminated. */
   float coverage; /* Relative share of the ground's area. */
+  float gain; /* Scales the whole drop: click, resonances, and bubble. */
   unsigned char vertical; /* 1: a wall facing the wind, hit by wind-driven rain; else 0. */
   float click_gain_min; /* Relative to the drop amplitude. */
   float click_gain_max;

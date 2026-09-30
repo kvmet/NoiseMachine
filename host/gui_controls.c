@@ -170,7 +170,9 @@ const gui_control gui_controls[CONTROL_COUNT] = {
   [CONTROL_CICADA_MAX_RAIN] = {"Sings below rain (mm/h)", FIELD(cicadas.max_rain_mm_h),
                                0.0f, 200.0f, 0.01f, GUI_SCALE_LOG_OFF, 1.0f, "%.2f"},
 
-  [CONTROL_RAIN_GAIN] = GAIN("Rain", rain.gain),
+  /* Up to 4 so quiet surfaces can reach the other layers; the bottom position means zero. */
+  [CONTROL_RAIN_GAIN] = {"Rain", FIELD(rain.gain), 0.0f, 4.0f, 0.01f, GUI_SCALE_LOG_OFF, 1.0f,
+                         "%.2f"},
   [CONTROL_BED_GAIN] = LINEAR("Rain bed ×", rain.bed_gain, 0.0f, 4.0f, "%.2f"),
   [CONTROL_DROP_RATE] = LINEAR("Played drops/s", rain.max_drops_per_s, 0.0f, 2000.0f, "%.0f"),
   [CONTROL_RAIN_MIN_DISTANCE] = LOG("Minimum distance (m)", rain.min_distance_m,
@@ -182,6 +184,8 @@ const gui_control gui_controls[CONTROL_COUNT] = {
   /* The coverage slider spans 1e-5 to 1; its bottom position means zero. */
   [CONTROL_SURFACE_COVERAGE] = {"Coverage", SURFACE(coverage), 0.0f, 1.0f, 1e-5f,
                                 GUI_SCALE_LOG_OFF, 1.0f, "%.3g"},
+  [CONTROL_SURFACE_GAIN] = {"Level ×", SURFACE(gain), 0.0f, 4.0f, 0.01f, GUI_SCALE_LOG_OFF,
+                            1.0f, "%.2f"},
   [CONTROL_CLICK_GAIN_MIN] = LINEAR_IN("Click gain minimum", SURFACE(click_gain_min),
                                        0.0f, 2.0f, "%.2f"),
   [CONTROL_CLICK_GAIN_MAX] = LINEAR_IN("Click gain maximum", SURFACE(click_gain_max),

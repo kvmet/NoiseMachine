@@ -84,8 +84,9 @@ Press **Start** for continuous playback. The tabs expose every field in
   1 to 8 km away.
 - **Rain**, **Impact**, **Bubbles**: the drop budget, distances, gust sheet
   depth, and the list of up to nine named surfaces. Pick a surface to rename
-  it, set its share of the ground, mark it **Vertical** so wind-driven rain
-  hits it, or delete it; **Add** appends a copy.
+  it, set its share of the ground and its **Level ×** against the other
+  surfaces, mark it **Vertical** so wind-driven rain hits it, or delete it;
+  **Add** appends a copy.
 - **Spatial**: listener width, head, and rear filter.
 
 Two lines under the tabs show the current weather and which layers it

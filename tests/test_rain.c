@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 static double resonance_damping(const noise_gen *gen) {
@@ -284,7 +285,39 @@ static void test_lifetimes_and_capacity(void) {
   for (unsigned i = 0; i < 2 * NOISE_SAMPLE_RATE_HZ; ++i) assert(audio[i] == 0);
 }
 
+/* A surface's gain scales its whole drop; the rain gain may boost past 1. */
+static void test_surface_gain(void) {
+  noise_config c = silent_config();
+  c.rain.gain = 4.0f;
+  droplet drop = water_drop();
+  assert(noise_init(&a, &c, 5) == NOISE_OK);
+  assert(noise_trigger_drop(&a, &drop) == NOISE_OK);
+  c.rain.surface[WATER].gain = 0.5f;
+  assert(noise_init(&b, &c, 5) == NOISE_OK);
+  assert(noise_trigger_drop(&b, &drop) == NOISE_OK);
+  noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ / 10);
+  int16_t frame[2];
+  int loud = 0;
+  for (unsigned n = 0; n < NOISE_SAMPLE_RATE_HZ / 10; ++n) {
+    noise_fill(&b, frame, 1);
+    assert(abs(audio[2 * n] - 2 * frame[0]) <= 1 && abs(audio[2 * n + 1] - 2 * frame[1]) <= 1);
+    if (abs(audio[2 * n]) > loud) loud = abs(audio[2 * n]);
+  }
+  assert(loud > 100);
+
+  c = silent_config();
+  c.rain.gain = 4.0f;
+  c.rain.surface[WATER].gain = 4.0f;
+  assert(noise_config_valid(&c));
+  c.rain.gain = 4.01f;
+  assert(!noise_config_valid(&c));
+  c.rain.gain = 4.0f;
+  c.rain.surface[WATER].gain = 4.01f;
+  assert(!noise_config_valid(&c));
+}
+
 void run_rain_tests(void) {
+  test_surface_gain();
   test_bubble_physics();
   test_water_controls();
   test_automatic_water_bubbles();

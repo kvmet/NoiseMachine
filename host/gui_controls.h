@@ -97,6 +97,7 @@ typedef enum gui_control_id {
   CONTROL_SHEET_DEPTH,
   /* Fields of the selected surface. */
   CONTROL_SURFACE_COVERAGE,
+  CONTROL_SURFACE_GAIN,
   CONTROL_CLICK_GAIN_MIN,
   CONTROL_CLICK_GAIN_MAX,
   CONTROL_CLICK_FREQUENCY_MIN,

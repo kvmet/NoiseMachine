@@ -487,7 +487,8 @@
   _verticalBox = [NSButton checkboxWithTitle:@"Vertical: hit by wind-driven rain"
                                       target:self action:@selector(verticalChanged:)];
   NSView *vertical = [self rowWithViews:@[[self rowLabel:@"" width:LABEL_WIDTH], _verticalBox]];
-  return @[picker, name, [self row:CONTROL_SURFACE_COVERAGE], vertical];
+  return @[picker, name, [self row:CONTROL_SURFACE_COVERAGE], [self row:CONTROL_SURFACE_GAIN],
+           vertical];
 }
 
 - (NSView *)cicadaSpeciesRow {

@@ -256,13 +256,14 @@ velocity.
 Mass is proportional to radius cubed, and kinetic energy is mV²/2.
 The source amplitude follows the square root of relative kinetic energy:
 
-    A = 0.004375 × (drop_radius / 0.0005)^(3/2) × V / 4
+    A = g_s × 0.004375 × (drop_radius / 0.0005)^(3/2) × V / 4
 
-This is a chosen conversion from impact energy to digital amplitude,
-not a pressure calibration. It differs from the pressure amplitude model
-in [1]. The coefficient puts the peaks of 150 mm/h rain near -3 dBFS at
-unit gains, so drizzle is quiet. The radius and speed in the denominator
-define a 1 mm diameter reference drop at 4 m/s.
+where g_s is the surface's `gain`, which scales its whole drop against the
+other surfaces. This is a chosen conversion from impact energy to digital
+amplitude, not a pressure calibration. It differs from the pressure
+amplitude model in [1]. The layer's overall level follows the shared
+reference under Signal path and units. The radius and speed in the
+denominator define a 1 mm diameter reference drop at 4 m/s.
 
 ## Surfaces
 
@@ -362,6 +363,7 @@ material constants or solutions for a particular object shape.
 | `surface_count` | 1 to 9 |
 | `name` | NUL within 16 bytes |
 | `coverage` | 0 to 1000; at least one used surface above zero |
+| `gain` | 0 to 4; default 1 |
 | `vertical` | 0 or 1 |
 | `click_gain_min`, `click_gain_max` | 0 to 2 |
 | `click_frequency_min_hz`, `click_frequency_max_hz` | 20 to 20000 Hz |
@@ -763,7 +765,8 @@ Do not call it concurrently with rendering.
 
 Configuration ranges are:
 
-- Ambient, rain, master, and reverb gains: 0 to 1 each.
+- Ambient, master, and reverb gains: 0 to 1 each. Rain gain: 0 to 4, so rain on
+  quiet surfaces can reach the other layers.
 - Wind gain, the level at 10 m/s, stereo width, and balance: 0 to 1;
   balance default 0.5. Brightness: 0.25 to 4, default 1. Rumble: 0 to 2,
   default 1.

@@ -32,14 +32,14 @@
                   .bubble_gain_min = 1.0f, .bubble_gain_max = 1.0f, \
                   .bubble_decay_min = 1.0f, .bubble_decay_max = 1.0f, .bubble_delay_s = 0.002f
 #define SOLID(label, share, click, f1, d1, f2, d2, resonance, lowpass) { \
-    .name = label, .coverage = share, \
+    .name = label, .coverage = share, .gain = 1.0f, \
     .click_gain_min = click, .click_gain_max = click, CLICK, \
     .mode = {{f1, d1, resonance}, {f2, d2, 0.5f * resonance}}, \
     .detune = 0.15f, .lowpass_hz = lowpass, NO_BUBBLE}
 
 static const noise_surface default_surfaces[NOISE_MAX_SURFACES] = {
   [WATER] = {
-    .name = "Water", .coverage = 0.37f,
+    .name = "Water", .coverage = 0.37f, .gain = 1.0f,
     .click_gain_min = 0.15f, .click_gain_max = 0.5f, CLICK,
     .mode = {{1000.0f, 1000.0f, 0.0f}, {1000.0f, 1000.0f, 0.0f}},
     .bubble_probability = 0.85f,
@@ -66,6 +66,7 @@ static int mode_valid(const noise_surface_mode *m) {
 static int surface_valid(const noise_surface *s) {
   return memchr(s->name, '\0', sizeof(s->name)) != NULL &&
          in_range(s->coverage, 0.0f, 1000.0f) &&
+         in_range(s->gain, 0.0f, 4.0f) &&
          s->vertical <= 1 &&
          in_range(s->click_gain_min, 0.0f, 2.0f) &&
          in_range(s->click_gain_max, s->click_gain_min, 2.0f) &&
@@ -86,7 +87,7 @@ static int surface_valid(const noise_surface *s) {
 }
 
 int noise_rain_config_valid(const noise_rain_config *c) {
-  if (!in_range(c->gain, 0.0f, 1.0f) ||
+  if (!in_range(c->gain, 0.0f, 4.0f) ||
       !in_range(c->max_drops_per_s, 0.0f, 2000.0f) ||
       !in_range(c->bed_gain, 0.0f, 4.0f) ||
       !in_range(c->sheet_depth, 0.0f, 2.0f) ||
@@ -342,7 +343,7 @@ noise_result noise_rain_start_drop(noise_rain *rain, noise_state *state, const n
   }
   const noise_surface *s = &c->surface[drop->surface];
   float radius_ratio = drop->radius_m / 0.0005f;
-  float amplitude = 0.004375f * sqrtf(radius_ratio * radius_ratio * radius_ratio) *
+  float amplitude = s->gain * 0.004375f * sqrtf(radius_ratio * radius_ratio * radius_ratio) *
                     drop->velocity_m_s / 4.0f;
   float click_gain = sample_range(&rain->drop_rng, s->click_gain_min, s->click_gain_max);
   voice->material_lowpass_alpha = s->lowpass_hz > 0.0f ?
