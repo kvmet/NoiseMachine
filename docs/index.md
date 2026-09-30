@@ -85,13 +85,22 @@ to 2 s while level falls to zero and pitch and click rate fall 15 percent.
 Silence between calls is exponential. The values below are starting points
 from descriptions of each song, not fitted to recordings.
 
-| | Dog-day | Minminzemi | Higurashi |
-|---|---|---|---|
-| Clicks/s | 300 | 400 | 500 |
-| Body Q | 6, a buzz | 20, tonal | 30, near a whistle |
-| Syllables | none | 5 to 15 at 3/s, 70% sounding, rising 4% | 20 to 40 slowing from 8/s to 6/s, 50% sounding, falling 5%, fading to 0.3 |
-| Held note | 10 to 18 s, 40% pulsing | 1 to 2 s, 20% pulsing | none |
-| Mean gap | 20 s | 8 s | 15 s |
+| Species | Pitch | Clicks/s | Body Q | Syllables | Held note | Mean gap |
+|---|---|---|---|---|---|---|
+| Dog-day (US) | 5 kHz | 300 | 6 | none | 10 to 18 s, 40% pulsing | 20 s |
+| Minminzemi (JP) | 5 kHz | 400 | 20 | 5 to 15 at 3/s, 70% sounding, rising 4% | 1 to 2 s, 20% pulsing | 8 s |
+| Higurashi (JP) | 5 kHz | 500 | 30 | 20 to 40 slowing from 8/s to 6/s, 50% sounding, falling 5%, fading to 0.3 | none | 15 s |
+| Aburazemi (JP) | 4.5 kHz | 450 | 4 | none | 5 to 20 s, 10% pulsing | 10 s |
+| Niiniizemi (JP) | 7.5 kHz | 500 | 15 | none | 10 to 30 s, 5% pulsing | 10 s |
+| Kumazemi (JP) | 5 kHz | 400 | 5 | 20 to 40 at 4/s, 60% sounding | none | 10 s |
+| Pharaoh cicada (US) | 1.4 kHz | 300 | 10 | none | 1 to 3 s | 5 s |
+| Scissor grinder (US) | 5.5 kHz | 300 | 6 | 50 to 100 at 5/s, 80% sounding | none | 20 s |
+| Cigale grise (FR) | 4.5 kHz | 400 | 8 | 80 to 200 at 8/s, 40% sounding | none | 10 s |
+| Green grocer (AU) | 4 kHz | 450 | 8 | none | 15 to 30 s, 15% pulsing | 15 s |
+
+A low Q buzzes; a high Q rings across clicks and sounds tonal. The region is
+where each species is typical. `noise_cicada_set_species` selects a species
+and its typical pitch; the pitch control then adjusts it.
 
 Each individual uses the same spatial model and reverb send as a cricket, with
 its own distance bounds; stereo width is angular spread.
@@ -754,8 +763,7 @@ Configuration ranges are:
 - Cricket call rate scale: 0.1 to 2, default 0.5. Pitch: 2 to 8 kHz.
   Pitch variation and stereo width: 0 to 1. Distance bounds: 0.25 to 100 m,
   ordered; defaults 2 and 15 m.
-- Cicada species: dog-day, minminzemi, or higurashi. Pitch: 2 to 10 kHz,
-  default 5 kHz. Click rate scale: 0.5 to 1.5. Chorus and stereo width: 0 to 1. Distance bounds: 0.25 to 100 m, ordered;
+- Cicada species: any in the table above. Pitch: 1 to 10 kHz, default 5 kHz. Click rate scale: 0.5 to 1.5. Chorus and stereo width: 0 to 1. Distance bounds: 0.25 to 100 m, ordered;
   defaults 5 and 30 m.
 - Thunder gain: 0 to 1, default 0. Reverb gain: 0 to 1, default 0.5.
   Reverb decay: 0.5 to 10 s, default 3.5 s. Scatter: 0 to 10 km, default 4.

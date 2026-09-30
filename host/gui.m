@@ -271,7 +271,8 @@
 }
 
 - (void)cicadaSpeciesChanged:(NSPopUpButton *)sender {
-  _config.cicadas.species = (cicada_species)sender.indexOfSelectedItem;
+  noise_cicada_set_species(&_config.cicadas, (cicada_species)sender.indexOfSelectedItem);
+  [self showControl:CONTROL_CICADA_PITCH];
   [self publishConfig];
 }
 
@@ -494,7 +495,9 @@
   label.alignment = NSTextAlignmentRight;
   [label.widthAnchor constraintEqualToConstant:LABEL_WIDTH].active = YES;
   NSPopUpButton *menu = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
-  [menu addItemsWithTitles:@[@"Dog-day", @"Minminzemi", @"Higurashi"]];
+  for (unsigned i = 0; i < NOISE_CICADA_SPECIES_COUNT; ++i) {
+    [menu addItemWithTitle:@(noise_cicada_species[i].name)];
+  }
   [menu selectItemAtIndex:_config.cicadas.species];
   menu.target = self;
   menu.action = @selector(cicadaSpeciesChanged:);

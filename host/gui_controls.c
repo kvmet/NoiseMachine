@@ -143,7 +143,7 @@ const gui_control gui_controls[CONTROL_COUNT] = {
                                        0.25f, 100.0f, "%.3f"),
 
   [CONTROL_CICADA_GAIN] = GAIN("Cicadas", cicadas.gain),
-  [CONTROL_CICADA_PITCH] = LOG("Pitch (Hz)", cicadas.pitch_hz, 2000.0f, 10000.0f, "%.2f"),
+  [CONTROL_CICADA_PITCH] = LOG("Pitch (Hz)", cicadas.pitch_hz, 1000.0f, 10000.0f, "%.2f"),
   [CONTROL_CICADA_CLICK_RATE] = LINEAR("Click rate ×", cicadas.click_rate_scale,
                                        0.5f, 1.5f, "%.2f"),
   [CONTROL_CICADA_CHORUS] = GAIN("Distant chorus", cicadas.chorus),

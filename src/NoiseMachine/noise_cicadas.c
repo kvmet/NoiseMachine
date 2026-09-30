@@ -27,19 +27,46 @@ typedef struct cicada_song {
 } cicada_song;
 
 /* Starting values from descriptions of each song, not fitted to recordings. */
+const noise_cicada_species_info noise_cicada_species[NOISE_CICADA_SPECIES_COUNT] = {
+  [CICADA_DOG_DAY] = {"Dog-day (US)", "dog-day", 5000.0f},
+  [CICADA_MINMINZEMI] = {"Minminzemi (JP)", "minminzemi", 5000.0f},
+  [CICADA_HIGURASHI] = {"Higurashi (JP)", "higurashi", 5000.0f},
+  [CICADA_ABURAZEMI] = {"Aburazemi (JP)", "aburazemi", 4500.0f},
+  [CICADA_NIINIIZEMI] = {"Niiniizemi (JP)", "niiniizemi", 7500.0f},
+  [CICADA_KUMAZEMI] = {"Kumazemi (JP)", "kumazemi", 5000.0f},
+  [CICADA_PHARAOH] = {"Pharaoh cicada (US)", "pharaoh", 1400.0f},
+  [CICADA_SCISSOR_GRINDER] = {"Scissor grinder (US)", "scissor-grinder", 5500.0f},
+  [CICADA_CIGALE_GRISE] = {"Cigale grise (FR)", "cigale-grise", 4500.0f},
+  [CICADA_GREEN_GROCER] = {"Green grocer (AU)", "green-grocer", 4000.0f},
+};
+
 static const cicada_song cicada_songs[NOISE_CICADA_SPECIES_COUNT] = {
   /* Dog-day: one long buzz that swells, pulses, and winds down. */
   {300.0f, 6.0f, {1.0f, 1.0f}, 0.0f, 0.0f, {0.0f, 0.0f}, 1.0f, {10.0f, 18.0f}, 0.4f, 20.0f},
   /* Minminzemi: rising "min" syllables, then a long falling "miiin". */
   {400.0f, 20.0f, {3.0f, 3.0f}, 0.7f, -0.04f, {5.0f, 15.0f}, 1.0f, {1.0f, 2.0f}, 0.2f, 8.0f},
   /* Higurashi: tonal falling "kana" pulses that slow and fade. */
-  {500.0f, 30.0f, {8.0f, 6.0f}, 0.5f, 0.05f, {20.0f, 40.0f}, 0.3f, {0.0f, 0.0f}, 0.0f, 15.0f}
+  {500.0f, 30.0f, {8.0f, 6.0f}, 0.5f, 0.05f, {20.0f, 40.0f}, 0.3f, {0.0f, 0.0f}, 0.0f, 15.0f},
+  /* Aburazemi: a long sizzle like frying oil. */
+  {450.0f, 4.0f, {1.0f, 1.0f}, 0.0f, 0.0f, {0.0f, 0.0f}, 1.0f, {5.0f, 20.0f}, 0.1f, 10.0f},
+  /* Niiniizemi: a long, thin, high "chiii". */
+  {500.0f, 15.0f, {1.0f, 1.0f}, 0.0f, 0.0f, {0.0f, 0.0f}, 1.0f, {10.0f, 30.0f}, 0.05f, 10.0f},
+  /* Kumazemi: loud "shah-shah-shah" bursts. */
+  {400.0f, 5.0f, {4.0f, 4.0f}, 0.6f, 0.0f, {20.0f, 40.0f}, 1.0f, {0.0f, 0.0f}, 0.0f, 10.0f},
+  /* Pharaoh: a short low buzz that falls at the end, "phaaa-roah". */
+  {300.0f, 10.0f, {1.0f, 1.0f}, 0.0f, 0.0f, {0.0f, 0.0f}, 1.0f, {1.0f, 3.0f}, 0.0f, 5.0f},
+  /* Scissor grinder: a buzz pulsing like a grinding wheel. */
+  {300.0f, 6.0f, {5.0f, 5.0f}, 0.8f, 0.0f, {50.0f, 100.0f}, 1.0f, {0.0f, 0.0f}, 0.0f, 20.0f},
+  /* Cigale grise: long trains of short chirps. */
+  {400.0f, 8.0f, {8.0f, 8.0f}, 0.4f, 0.0f, {80.0f, 200.0f}, 1.0f, {0.0f, 0.0f}, 0.0f, 10.0f},
+  /* Green grocer: a long, steady drone. */
+  {450.0f, 8.0f, {1.0f, 1.0f}, 0.0f, 0.0f, {0.0f, 0.0f}, 1.0f, {15.0f, 30.0f}, 0.15f, 15.0f},
 };
 
 int noise_cicada_config_valid(const noise_cicada_config *c) {
   return in_range(c->gain, 0.0f, 1.0f) &&
          (unsigned)c->species < NOISE_CICADA_SPECIES_COUNT &&
-         in_range(c->pitch_hz, 2000.0f, 10000.0f) &&
+         in_range(c->pitch_hz, 1000.0f, 10000.0f) &&
          in_range(c->click_rate_scale, 0.5f, 1.5f) &&
          in_range(c->chorus, 0.0f, 1.0f) &&
          noise_placement_valid(&c->placement) &&
@@ -56,6 +83,11 @@ void noise_cicada_config_default(noise_cicada_config *c) {
   c->placement.max_distance_m = 30.0f;
   c->min_temperature_c = 22.0f;
   c->max_rain_mm_h = 0.5f;
+}
+
+void noise_cicada_set_species(noise_cicada_config *c, cicada_species species) {
+  c->species = species;
+  c->pitch_hz = noise_cicada_species[species].pitch_hz;
 }
 
 void noise_cicadas_init(noise_cicadas *cicadas, uint32_t seed) {

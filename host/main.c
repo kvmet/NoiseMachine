@@ -50,7 +50,7 @@ static void print_usage(const char *program) {
       "  -v             simulate passing storms instead of fixed weather\n"
       "  -x scale       storm time speed-up, 1..600; default 1\n"
       "  -m mixed|water|dirt|leaf|concrete|glass|metal|plastic|asphalt|asphalt-roof\n"
-      "  -c dog-day|minminzemi|higurashi   cicada species; default dog-day\n"
+      "  -c species     cicada species; default dog-day (see below)\n"
       "  -n rate        drops played one by one per second, 0..2000\n"
       "  -b metres      ear spacing / head diameter, 0..0.5; default 0.18\n"
       "  -a amount      head model strength, 0..1; 0 bypasses it\n"
@@ -58,7 +58,11 @@ static void print_usage(const char *program) {
       "  -e gain        reverb gain, 0..1\n"
       "  -g gain        master gain, 0..1\n"
       "  -s seed        unsigned 32-bit integer\n"
-      "  -d seconds     duration, default 10\n", program);
+      "  -d seconds     duration, default 10\n"
+      "cicada species:\n", program);
+  for (unsigned i = 0; i < NOISE_CICADA_SPECIES_COUNT; ++i) {
+    fprintf(stderr, "  %-16s %s\n", noise_cicada_species[i].key, noise_cicada_species[i].name);
+  }
 }
 
 static int parse_number(const char *text, double *value) {
@@ -176,14 +180,16 @@ int main(int argc, char **argv) {
         }
       }
     } else if (strcmp(arg, "-c") == 0) {
-      static const char *names[] = {"dog-day", "minminzemi", "higurashi"};
       unsigned species = 0;
-      while (species < NOISE_CICADA_SPECIES_COUNT && strcmp(value, names[species])) ++species;
+      while (species < NOISE_CICADA_SPECIES_COUNT &&
+             strcmp(value, noise_cicada_species[species].key)) {
+        ++species;
+      }
       if (species == NOISE_CICADA_SPECIES_COUNT) {
         fprintf(stderr, "unknown cicada species: %s\n", value);
         return 1;
       }
-      config.cicadas.species = (cicada_species)species;
+      noise_cicada_set_species(&config.cicadas, (cicada_species)species);
     } else if (strcmp(arg, "-s") == 0) {
       char *end;
       errno = 0;

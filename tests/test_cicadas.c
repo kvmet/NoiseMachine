@@ -185,8 +185,14 @@ static void test_cicada_songs(void) {
   c.cicadas.placement.max_distance_m = 5.0f;
   double share[NOISE_CICADA_SPECIES_COUNT];
   static double power[800]; /* 10 ms blocks. */
+  /* Mean syllable rate of each phrase; zero for a single held note. */
+  static const double rate[NOISE_CICADA_SPECIES_COUNT] = {
+    [CICADA_MINMINZEMI] = 3.0, [CICADA_HIGURASHI] = 7.0, [CICADA_KUMAZEMI] = 4.0,
+    [CICADA_SCISSOR_GRINDER] = 5.0, [CICADA_CIGALE_GRISE] = 8.0,
+  };
   for (unsigned species = 0; species < NOISE_CICADA_SPECIES_COUNT; ++species) {
-    c.cicadas.species = (cicada_species)species;
+    noise_cicada_set_species(&c.cicadas, (cicada_species)species);
+    assert(c.cicadas.pitch_hz == noise_cicada_species[species].pitch_hz);
     solo_cicada(c, 0);
     const noise_cicada_voice *v = &a.cicadas.voice[0];
     double pitch = c.cicadas.pitch_hz * (1.0 + 0.05 * v->pitch_offset);
@@ -194,7 +200,11 @@ static void test_cicada_songs(void) {
     unsigned blocks = 0;
     for (unsigned second = 0; second < 8; ++second) {
       noise_fill(&a, audio, NOISE_SAMPLE_RATE_HZ);
-      if (second == 1) share[species] = band_share(pitch);
+      if (second == 1) {
+        /* Each song sounds at its species' typical pitch. */
+        share[species] = band_share(pitch);
+        assert(share[species] > 0.4 && share[species] > 10.0 * band_share(0.7 * pitch));
+      }
       for (unsigned b = 0; b < 100; ++b, ++blocks) {
         power[blocks] = 0.0;
         for (unsigned n = 441 * b; n < 441 * (b + 1); ++n) {
@@ -203,10 +213,10 @@ static void test_cicada_songs(void) {
       }
     }
     assert(a.state.clipped_samples == 0);
-    if (species == CICADA_DOG_DAY) continue;
+    if (rate[species] == 0.0) continue;
     /* Syllable rhythm: the strongest envelope frequency over the syllables. */
-    double rate[2] = {3.0, 7.0};
-    unsigned span = (unsigned)(100.0 * syllables / rate[species - 1]) - 20;
+    unsigned span = (unsigned)(100.0 * syllables / rate[species]) - 20;
+    if (span > blocks) span = blocks;
     double best = 0.0, peak = 0.0;
     for (double f = 1.0; f < 15.0; f += 0.05) {
       double re = 0.0, im = 0.0;
@@ -219,7 +229,7 @@ static void test_cicada_songs(void) {
         peak = f;
       }
     }
-    assert(fabs(peak - rate[species - 1]) < 0.15 * rate[species - 1]);
+    assert(fabs(peak - rate[species]) < 0.15 * rate[species]);
     if (species == CICADA_HIGURASHI) {
       double first = 0.0, last = 0.0;
       for (unsigned b = 0; b < span / 4; ++b) {

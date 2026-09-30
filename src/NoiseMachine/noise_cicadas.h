@@ -10,8 +10,23 @@ typedef enum cicada_species {
   CICADA_DOG_DAY = 0,
   CICADA_MINMINZEMI,
   CICADA_HIGURASHI,
+  CICADA_ABURAZEMI,
+  CICADA_NIINIIZEMI,
+  CICADA_KUMAZEMI,
+  CICADA_PHARAOH,
+  CICADA_SCISSOR_GRINDER,
+  CICADA_CIGALE_GRISE,
+  CICADA_GREEN_GROCER,
   NOISE_CICADA_SPECIES_COUNT
 } cicada_species;
+
+typedef struct noise_cicada_species_info {
+  const char *name; /* Display name with the typical region. */
+  const char *key; /* Lowercase, hyphenated; for command lines. */
+  float pitch_hz; /* Typical body pitch. */
+} noise_cicada_species_info;
+
+extern const noise_cicada_species_info noise_cicada_species[NOISE_CICADA_SPECIES_COUNT];
 
 typedef struct noise_cicada_config {
   float gain;
@@ -62,6 +77,8 @@ extern "C" {
 
 int noise_cicada_config_valid(const noise_cicada_config *c);
 void noise_cicada_config_default(noise_cicada_config *c);
+/* Selects species and its typical pitch. */
+void noise_cicada_set_species(noise_cicada_config *c, cicada_species species);
 void noise_cicadas_init(noise_cicadas *cicadas, uint32_t seed);
 void noise_cicadas_configure(noise_cicadas *cicadas, const noise_cicada_config *c);
 /* Silences the cicadas when it is too cool or wet for the configuration. */

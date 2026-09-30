@@ -11,8 +11,8 @@ renderer and an Arduino sketch for eventual ESP32 audio output.
   drive the rain, wind, insects, and thunder, with a time speed-up for testing.
 - Place drops around the listener with per-ear attenuation, fractional delay,
   a tunable spherical-head HRTF, rear filtering, and shared stereo reverb.
-- Place crickets and cicadas (dog-day, minminzemi, or higurashi) around the
-  listener with the same spatial model and reverb as rain.
+- Place crickets and cicadas (ten species from Japan, the US, France, and
+  Australia) around the listener with the same spatial model and reverb as rain.
 - Trigger thunder strikes by hand or from the storm's lightning. Each strike sums
   N-waves from a random tortuous channel, filtered by distance, with echoes
   off fixed terrain and its own reverb.
@@ -120,7 +120,8 @@ Run `./host/noise_host -h` for usage.
   coverage defaults to zero.
 - `-n NUMBER`: drops played one by one per second, from 0 to 2000. A noise
   bed plays the rest. Default: 900.
-- `-c dog-day|minminzemi|higurashi`: cicada species. Default: dog-day.
+- `-c SPECIES`: cicada species, which also sets its typical pitch. `-h`
+  lists them. Default: dog-day.
 - `-b METRES`: ear spacing and head diameter, from 0 to 0.5. Default: 0.18.
 - `-a NUMBER`: head effect from 0 to 1. Default: 1. Zero retains geometric
   mic delay and attenuation while disabling shadowing and diffraction.
