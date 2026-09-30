@@ -391,7 +391,7 @@ static void test_status(void) {
   assert(fabsf(s.rain_played_per_s - 500.0f) < 0.1f);
   assert(s.rain_arrivals_per_s > 20.0f * s.rain_played_per_s);
   assert(s.bed_share > 0.9f && s.bed_share < 1.0f);
-  assert(fabsf(s.wind_level - powf(s.weather.wind_m_s / 20.0f, 2.0f)) < 1e-5f);
+  assert(fabsf(s.wind_level - s.weather.wind_m_s / 10.0f) < 1e-5f);
 
   /* Each threshold is the configured one. */
   c.crickets.min_temperature_c = 5.0f;

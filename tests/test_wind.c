@@ -32,11 +32,15 @@ static void test_wind(void) {
   assert(band_power(6400) / band_power(200) > 20.0 * calm_ratio);
   assert(a.state.clipped_samples == 0);
 
-  /* Level follows the square of speed, reaching the gain at 20 m/s. */
+  /* Level is proportional to speed, relative to 10 m/s. */
   c.storm.fixed.wind_m_s = 10.0f;
   assert(noise_init(&a, &c, 17) == NOISE_OK);
-  float expected = 0.5f * powf(a.state.weather.wind_m_s / 20.0f, 2.0f);
-  assert(fabsf(a.wind.target[0] - expected) < 1e-6f && a.wind.target[1] == a.wind.target[0]);
+  assert(fabsf(a.wind.relative_level - a.state.weather.wind_m_s / 10.0f) < 1e-6f);
+  assert(a.wind.target[1] == a.wind.target[0]);
+  float level_per_m_s = a.wind.target[0] / a.state.weather.wind_m_s;
+  c.storm.fixed.wind_m_s = 20.0f;
+  assert(noise_init(&a, &c, 17) == NOISE_OK);
+  assert(fabsf(a.wind.target[0] / a.state.weather.wind_m_s / level_per_m_s - 1.0f) < 1e-5f);
 
   /* Wind from the right is louder in the right ear. */
   c.storm.fixed.wind_bearing_rad = 0.5f * (float)TEST_PI;

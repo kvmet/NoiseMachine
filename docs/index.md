@@ -17,6 +17,15 @@ Ambient layers join the stereo mix after the reverb.
 `rain.gain` scales direct rain, the bed, and the reverb send. `master_gain` scales
 the final output before conversion to PCM.
 
+Every layer's gain 1 at its reference condition gives the same loudness,
+-24 LUFS (BS.1770, power mean over eight seeds, default reverb, master gain 1),
+so layer gains compare directly. The reference conditions are rain at 10 mm/h
+on the default surfaces, wind at 10 m/s, crickets at 25 °C, cicadas at 30 °C,
+and white noise, pink noise, and hum as they are. Thunder is louder on purpose:
+the loudest 400 ms of a strike 2 km away reads -18 LUFS. Weather moves each
+layer away from its reference; `tests/test_mix.c` checks each reference within
+1 dB.
+
 Distances and radii use metres; velocity uses m/s; angles use radians;
 frequency uses Hz; damping uses reciprocal seconds. `radius_m` is the water
 drop radius. `bubble_radius_m` is the radius of enclosed air, a separate
@@ -35,9 +44,8 @@ others. White noise, pink noise, and hum are identical in both
 channels. The nature layers have independent stereo-width controls.
 
 White noise maps the upper 24 bits of a xorshift32 stream to the interval
-[-1, 1). Pink noise uses the existing Paul Kellet seven-state filter, with
-its output scaled by 0.11. Its power density approximates 1/f, so equal
-frequency octaves have similar power. The coefficients are for 44.1 kHz;
+[-1, 1). Pink noise uses the existing Paul Kellet seven-state filter. Its
+power density approximates 1/f, so equal frequency octaves have similar power. The coefficients are for 44.1 kHz;
 changing the sample rate requires revisiting them. See [5].
 
 The hum waveform is
@@ -686,8 +694,8 @@ Each module reads the weather at every update.
 
 - Rain: arrival rate, drop sizes, near ring, bed, wall share, and sheets, as
   above.
-- Wind: level is `wind.gain` × (min(speed, 35) / 20)², so the gain is the
-  level at 20 m/s and level rises 12 dB per doubling of speed. This is a
+- Wind: level is `wind.gain` × min(speed, 35) / 10, so the gain is the
+  level at 10 m/s and level rises 6 dB per doubling of speed. This is a
   fitted curve, not a flow model. Brightness b = min(1, speed / 30) sets the
   air cutoff to `wind.brightness` × 400 × 20^b Hz, at most 18 kHz.
   `wind.rumble` scales the 120 Hz rumble. The ear facing the wind gets
@@ -756,7 +764,7 @@ Do not call it concurrently with rendering.
 Configuration ranges are:
 
 - Ambient, rain, master, and reverb gains: 0 to 1 each.
-- Wind gain, the level at 20 m/s, stereo width, and balance: 0 to 1;
+- Wind gain, the level at 10 m/s, stereo width, and balance: 0 to 1;
   balance default 0.5. Brightness: 0.25 to 4, default 1. Rumble: 0 to 2,
   default 1.
 - Insect thresholds: minimum temperature -10 to 45 °C, maximum rain 0 to

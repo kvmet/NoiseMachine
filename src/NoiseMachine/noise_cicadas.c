@@ -7,6 +7,8 @@
 
 #define CICADA_LEVEL 2.0f
 #define CICADA_CHORUS_LEVEL 0.015f
+/* Gain 1 at the reference condition in test_mix.c reads -24 LUFS. */
+#define CICADA_CALIBRATION 1.38f
 #define CICADA_CLICK 0.5f /* Band-pass ring amplitude is twice the impulse. */
 #define CICADA_JITTER 0.01f /* Click interval spread. */
 #define CICADA_DROP 0.15f /* Pitch and click rate fall through a held note's wind-down. */
@@ -218,7 +220,8 @@ static float cicada_next(noise_cicadas *cicadas, noise_cicada_voice *voice,
             random_between(rng, 1.0f - CICADA_JITTER, 1.0f + CICADA_JITTER);
       }
     }
-    sample = CICADA_LEVEL * c->gain * envelope * resonator_next(&voice->body, impulse);
+    sample = CICADA_CALIBRATION * CICADA_LEVEL * c->gain * envelope *
+             resonator_next(&voice->body, impulse);
     if (voice->note_samples == voice->note_length) {
       if (voice->holding) {
         cicada_rest(rng, voice, c);
@@ -256,7 +259,7 @@ static void cicada_chorus_next(noise_cicadas *cicadas, const noise_cicada_config
   cicadas->activity += CICADA_ACTIVITY_ALPHA *
                        ((cicadas->quiet ? 0.0f : 1.0f) - cicadas->activity);
   /* Band-passed noise power grows with Q; this holds the level at Q 3. */
-  float level = CICADA_CHORUS_LEVEL * c->gain * c->chorus * cicadas->swell *
+  float level = CICADA_CALIBRATION * CICADA_CHORUS_LEVEL * c->gain * c->chorus * cicadas->swell *
                 cicadas->activity * sqrtf(3.0f / q);
   for (unsigned ear = 0; ear < 2; ++ear) {
     float noise = 2.0f * random_unit(rng) - 1.0f;

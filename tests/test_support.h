@@ -18,6 +18,14 @@ double channel_amplitude(double frequency, unsigned channel);
 double spectral_amplitude(double frequency);
 double band_power(unsigned center);
 
+/* BS.1770 loudness in LUFS of gen's next seconds of output: gated integrated, and the
+   loudest 400 ms block. */
+typedef struct loudness {
+  double integrated;
+  double max_momentary;
+} loudness;
+loudness measure_loudness(noise_gen *gen, double seconds);
+
 void run_engine_tests(void);
 void run_ambient_tests(void);
 void run_wind_tests(void);
@@ -28,5 +36,6 @@ void run_rain_tests(void);
 void run_spatial_tests(void);
 void run_storm_tests(void);
 void run_reverb_tests(void);
+void run_mix_tests(void);
 
 #endif

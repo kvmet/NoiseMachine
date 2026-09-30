@@ -102,7 +102,7 @@ resetting the generator clears all current audio state.
 Run `./host/noise_host -h` for usage.
 
 - `-k white|pink|hum50|hum60|wind|crickets|cicadas|rain|thunder`: select a layer; repeat
-  to mix. Each ambient layer has gain 0.3; thunder has gain 0.5. With no layer or
+  to mix. Each layer has gain 0.5. With no layer or
   rain option, default to pink.
 - `-r MM_H`: fixed rain rate from 0 to 200 mm/h. Enables rain even without
   `-k rain`. Default with rain: 10.

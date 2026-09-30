@@ -13,6 +13,7 @@ int main(void) {
   run_spatial_tests();
   run_storm_tests();
   run_reverb_tests();
+  run_mix_tests();
   printf("core checks passed; engine size: %zu bytes\n", sizeof(noise_gen));
   return 0;
 }

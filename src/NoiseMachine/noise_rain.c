@@ -7,6 +7,8 @@
 
 #define NOISE_WATER_DENSITY 1000.0f
 #define NOISE_PRESSURE_PA 101325.0f
+/* Gain 1 at the reference condition in test_mix.c reads -24 LUFS. */
+#define RAIN_CALIBRATION 1.175f
 
 #define BUBBLE_RADIUS_MIN_M 0.00016f
 #define BUBBLE_RADIUS_MAX_M 0.004f
@@ -447,6 +449,7 @@ float noise_rain_next(noise_rain *rain, noise_state *state, const noise_rain_con
       random_unit(&rain->arrival_rng) < rain->arrival_probability) {
     spawn_rain(rain, state, c, listener);
   }
+  float gain = RAIN_CALIBRATION * c->gain;
   float send = 0.0f;
   unsigned i = 0;
   while (i < state->active_drops) {
@@ -464,7 +467,7 @@ float noise_rain_next(noise_rain *rain, noise_state *state, const noise_rain_con
         source = voice->material_lowpass_state[stage];
       }
     }
-    send += c->gain * noise_spatial_next(&voice->spatial, listener, &rain->bus, source);
+    send += gain * noise_spatial_next(&voice->spatial, listener, &rain->bus, source);
     if (!remaining) voice->filter_tail -= 1;
     if (!remaining && voice->filter_tail == 0) {
       /* Keep the active prefix dense to avoid scanning idle voices per sample. */
@@ -477,9 +480,9 @@ float noise_rain_next(noise_rain *rain, noise_state *state, const noise_rain_con
   float played[NOISE_CHANNELS];
   noise_bus_next(&rain->bus, &played[0], &played[1]);
   for (unsigned ear = 0; ear < NOISE_CHANNELS; ++ear) {
-    bus->direct[ear][bus->position] += c->gain * played[ear];
+    bus->direct[ear][bus->position] += gain * played[ear];
   }
-  float bed_gain = c->gain * c->bed_gain;
+  float bed_gain = gain * c->bed_gain;
   if (rain->bed.ratio > 0.0f && bed_gain > 0.0f) bed_next(&rain->bed, played, bed_gain, bus);
   return send;
 }

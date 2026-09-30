@@ -4,6 +4,11 @@
 
 #include "noise_internal.h"
 
+/* Gain 1 of each kind in test_mix.c reads -24 LUFS. */
+#define WHITE_CALIBRATION 0.0537f
+#define PINK_CALIBRATION 0.0267f
+#define HUM_CALIBRATION 0.1318f
+
 void noise_ambient_init(noise_ambient *ambient, uint32_t seed) {
   ambient->rng = stream_seed(seed, 0x9e3779b9u);
   for (unsigned i = 0; i < NOISE_HUM_TABLE_SAMPLES; ++i) {
@@ -16,7 +21,8 @@ void noise_ambient_init(noise_ambient *ambient, uint32_t seed) {
 float noise_ambient_next(noise_ambient *ambient, const float gain[NOISE_KIND_COUNT]) {
   float sample = 0.0f;
   if (gain[NOISE_KIND_WHITE] > 0.0f) {
-    sample += gain[NOISE_KIND_WHITE] * (2.0f * random_unit(&ambient->rng) - 1.0f);
+    sample += WHITE_CALIBRATION * gain[NOISE_KIND_WHITE] *
+              (2.0f * random_unit(&ambient->rng) - 1.0f);
   }
   if (gain[NOISE_KIND_PINK] > 0.0f) {
     float white = 2.0f * random_unit(&ambient->rng) - 1.0f;
@@ -29,18 +35,19 @@ float noise_ambient_next(noise_ambient *ambient, const float gain[NOISE_KIND_COU
     b[5] = -0.7616f * b[5] - white * 0.0168980f;
     float pink = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + white * 0.5362f;
     b[6] = white * 0.115926f;
-    sample += gain[NOISE_KIND_PINK] * pink * 0.11f;
+    sample += PINK_CALIBRATION * gain[NOISE_KIND_PINK] * pink;
   }
   const float *table = ambient->hum_table;
   if (gain[NOISE_KIND_HUM_50HZ] > 0.0f) {
-    sample += gain[NOISE_KIND_HUM_50HZ] * table[ambient->hum_sample % NOISE_HUM_TABLE_SAMPLES];
+    sample += HUM_CALIBRATION * gain[NOISE_KIND_HUM_50HZ] *
+              table[ambient->hum_sample % NOISE_HUM_TABLE_SAMPLES];
   }
   if (gain[NOISE_KIND_HUM_60HZ] > 0.0f) {
     /* 60 Hz has 735 samples/period; interpolate the common periodic table. */
     unsigned phase = (ambient->hum_sample % 735) * 6;
     unsigned index = phase / 5;
     float fraction = (float)(phase % 5) * 0.2f;
-    sample += gain[NOISE_KIND_HUM_60HZ] * (table[index] + fraction *
+    sample += HUM_CALIBRATION * gain[NOISE_KIND_HUM_60HZ] * (table[index] + fraction *
         (table[(index + 1) % NOISE_HUM_TABLE_SAMPLES] - table[index]));
   }
   /* 4410 frames hold whole periods of both hums. */

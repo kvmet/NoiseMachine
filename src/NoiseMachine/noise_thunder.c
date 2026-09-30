@@ -7,6 +7,8 @@
 #include "noise_internal.h"
 
 #define THUNDER_REFERENCE_M 1000.0f
+/* Gain 1 puts the loudest 400 ms of the test_mix.c reference strike at -18 LUFS. */
+#define THUNDER_CALIBRATION 1.93f
 #define THUNDER_FINE_STEP_M 3.0f
 #define THUNDER_ROUGHNESS 0.3f
 #define THUNDER_END_FADE 0.4f /* Fraction of a part that fades toward a late-arriving end. */
@@ -418,8 +420,8 @@ void noise_thunder_next(noise_thunder *thunder, const noise_thunder_config *c,
     if (!thunder->voice[i].length) continue;
     float out[2];
     thunder_voice_next(&thunder->rng, &thunder->echo_rng, &thunder->voice[i], out);
-    sum[0] += c->gain * out[0];
-    sum[1] += c->gain * out[1];
+    sum[0] += THUNDER_CALIBRATION * c->gain * out[0];
+    sum[1] += THUNDER_CALIBRATION * c->gain * out[1];
   }
   if (c->reverb_gain > 0.0f) {
     float wet[2];

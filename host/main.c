@@ -143,11 +143,11 @@ int main(int argc, char **argv) {
       } else if (strcmp(value, "thunder") == 0) {
         config.thunder.gain = 0.5f;
       } else if (strcmp(value, "wind") == 0) {
-        config.wind.gain = 0.3f;
+        config.wind.gain = 0.5f;
       } else if (strcmp(value, "crickets") == 0) {
-        config.crickets.gain = 0.3f;
+        config.crickets.gain = 0.5f;
       } else if (strcmp(value, "cicadas") == 0) {
-        config.cicadas.gain = 0.3f;
+        config.cicadas.gain = 0.5f;
       } else {
         static const char *names[NOISE_KIND_COUNT] = {"white", "pink", "hum50", "hum60"};
         unsigned kind = 0;
@@ -156,7 +156,7 @@ int main(int argc, char **argv) {
           fprintf(stderr, "unknown layer: %s\n", value);
           return 1;
         }
-        config.ambient_gain[kind] = 0.3f;
+        config.ambient_gain[kind] = 0.5f;
       }
     } else if (strcmp(arg, "-m") == 0) {
       if (strcmp(value, "mixed") == 0) {
@@ -231,7 +231,7 @@ int main(int argc, char **argv) {
     print_usage(argv[0]);
     return 1;
   }
-  if (!explicit_layer && !rain) config.ambient_gain[NOISE_KIND_PINK] = 0.3f;
+  if (!explicit_layer && !rain) config.ambient_gain[NOISE_KIND_PINK] = 0.5f;
   if (rain && !explicit_rain) config.storm.fixed.rain_mm_h = 10.0f;
   if (config.wind.gain > 0.0f && !explicit_wind) config.storm.fixed.wind_m_s = 10.0f;
   if (config.thunder.gain > 0.0f && !explicit_lightning) {

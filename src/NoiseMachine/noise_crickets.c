@@ -7,6 +7,8 @@
 #define CRICKET_PULSE_DROP 0.03f /* Carrier falls through each pulse as the wing slows. */
 #define CRICKET_SINGING_S 30.0f /* Mean bout lengths. */
 #define CRICKET_SILENT_S 10.0f
+/* Gain 1 at the reference condition in test_mix.c reads -24 LUFS. */
+#define CRICKET_CALIBRATION 1.315f
 
 int noise_cricket_config_valid(const noise_cricket_config *c) {
   return in_range(c->gain, 0.0f, 1.0f) &&
@@ -118,7 +120,7 @@ static float cricket_next(noise_crickets *crickets, noise_cricket_voice *voice,
           (float)(voice->sounding_samples - within_pulse) /
           (float)(voice->sounding_samples - attack);
       float tone = carrier - 0.22f * carrier * carrier * carrier;
-      sample = 0.35f * c->gain * envelope * tone;
+      sample = CRICKET_CALIBRATION * c->gain * envelope * tone;
     }
   }
   /* Runs between chirps too, so filter tails decay instead of holding. */

@@ -4,7 +4,9 @@
 
 #include "noise_internal.h"
 
-#define WIND_REFERENCE_M_S 20.0f
+#define WIND_REFERENCE_M_S 10.0f
+/* Gain 1 at the reference condition in test_mix.c reads -24 LUFS. */
+#define WIND_CALIBRATION 0.4315f
 #define WIND_LOUDEST_M_S 35.0f
 #define WIND_BRIGHTEST_M_S 30.0f
 #define WIND_GLIDE (1.0f / (0.02f * NOISE_SAMPLE_RATE_HZ)) /* 20 ms level glide. */
@@ -33,10 +35,9 @@ void noise_wind_init(noise_wind *wind, uint32_t seed) {
 
 void noise_wind_follow(noise_wind *wind, const noise_wind_config *c, const noise_weather *weather) {
   float speed = weather->wind_m_s;
-  /* Amplitude rises 12 dB per doubling of speed: a fitted curve, not a flow model. */
-  float relative = fminf(speed, WIND_LOUDEST_M_S) / WIND_REFERENCE_M_S;
-  wind->relative_level = relative * relative;
-  float level = c->gain * wind->relative_level;
+  /* Amplitude rises 6 dB per doubling of speed: a fitted curve, not a flow model. */
+  wind->relative_level = fminf(speed, WIND_LOUDEST_M_S) / WIND_REFERENCE_M_S;
+  float level = WIND_CALIBRATION * c->gain * wind->relative_level;
   float lateral = sinf(weather->wind_bearing_rad);
   wind->target[0] = level * sqrtf(1.0f - c->balance * lateral);
   wind->target[1] = level * sqrtf(1.0f + c->balance * lateral);
